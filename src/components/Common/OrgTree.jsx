@@ -2,12 +2,11 @@ import React, { useState } from "react";
 import useOrgStore from "../../store/orgStore";
 import dropdownIcon from "../../assets/img/dropdown.png";
 
-const OrgTree = () => {
+const OrgTree = ({ onSelect, selectedAssignees }) => {
   const { orgData } = useOrgStore();
   const [search, setSearch] = useState("");
   const [openDepts, setOpenDepts] = useState({});
 
-  // 부서 토글
   const toggleDept = (deptName) => {
     setOpenDepts((prev) => ({
       ...prev,
@@ -15,7 +14,6 @@ const OrgTree = () => {
     }));
   };
 
-  // 검색 필터
   const filteredData = orgData
     .map((dept) => {
       const matchedEmployees = dept.employees.filter(
@@ -36,8 +34,8 @@ const OrgTree = () => {
         border: "1px solid #ddd",
         borderRadius: "8px",
         padding: "16px",
-        width: "100%",       
-        maxWidth: "340px",   
+        width: "100%",
+        maxWidth: "340px",
         background: "#fff",
         fontSize: "11px",
         lineHeight: "1.5",
@@ -46,7 +44,6 @@ const OrgTree = () => {
     >
       <h4 style={{ marginBottom: "10px", fontSize: "14px" }}>조직도</h4>
 
-      {/* 검색창 */}
       <input
         type="text"
         placeholder="검색(이름/부서)"
@@ -63,18 +60,16 @@ const OrgTree = () => {
         }}
       />
 
-      {/* 트리 */}
       <ul style={{ listStyle: "none", paddingLeft: "0", margin: 0 }}>
         {filteredData.map((dept) => {
           const isOpen = search !== "" ? true : openDepts[dept.deptName] ?? true;
 
           return (
             <li key={dept.deptName} style={{ marginBottom: "14px" }}>
-              {/* 부서 */}
               <div
                 style={{
                   fontWeight: "bold",
-                  fontSize: "14px", // 
+                  fontSize: "14px",
                   display: "flex",
                   alignItems: "center",
                   gap: "6px",
@@ -93,15 +88,10 @@ const OrgTree = () => {
                     height: "14px",
                     transform: isOpen ? "rotate(180deg)" : "rotate(90deg)",
                     transition: "transform 0.2s ease",
-                    background: "transparent", // 
-                    border: "none",
-                    display: "block",
-                    objectFit: "contain",
                   }}
                 />
               </div>
 
-              {/* 사원 */}
               {isOpen && (
                 <ul
                   style={{
@@ -117,23 +107,25 @@ const OrgTree = () => {
                       style={{
                         marginBottom: "6px",
                         display: "flex",
-                        alignItems: "baseline", 
+                        alignItems: "baseline",
                         gap: "6px",
-                        fontSize: "12px", 
+                        fontSize: "12px",
                         cursor: "pointer",
+                        fontWeight: selectedAssignees?.some(a => a.value === emp.eno) ? "bold" : "normal",
+                        color: selectedAssignees?.some(a => a.value === emp.eno) ? "#007bff" : "#333",
                       }}
                       onClick={() => {
-                        console.log("Clicked employee:", emp);
-                        // 추후 모달/상세보기 연결 가능
+                        if (onSelect) {
+                          onSelect({ value: emp.eno, label: emp.name });
+                        }
                       }}
                     >
                       <span></span>
-                      <span style={{ fontWeight: "bold" }}>{emp.name}</span>
-                      <span style={{ color: "#777", fontSize: "10px" }}>
-                        {emp.position}
-                      </span>
+                      <span>{emp.name}</span>
+                      <span style={{ color: "#777", fontSize: "10px" }}>{emp.position}</span>
                     </li>
                   ))}
+
                 </ul>
               )}
             </li>

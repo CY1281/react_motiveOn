@@ -56,6 +56,7 @@ useEffect(() => {
         size: 50,
       });
 
+
       // 1) 응답이 JSON인지 검증 (로그인 리다이렉트 등 HTML 차단)
       const ct = (res?.headers?.["content-type"] || "").toLowerCase();
       if (!ct.includes("application/json")) {
@@ -172,7 +173,7 @@ function DocCard({ row }) {
         <div className="titleLeft">
           <a
             href="#"
-            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail?signNo=${row.signNo}`); }}
+            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail/${row.signNo}`); }}
             className="title"
             title={row.title}
             style={{ color: "inherit", textDecoration: "none" }}

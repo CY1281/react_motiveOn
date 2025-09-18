@@ -54,8 +54,8 @@ function useTopOffset(selectors = ["#appHeader", "#app-header", ".app-header", "
 /* ================= page ================= */
 export default function ApprovalComposePage({
   currentUserName = "이민진",
-  onTempSave = async () => ({ ok: true }),
-  onSubmitDraft = async () => ({ ok: true, signNo: "A-2025-000123" }),
+  onTempSave,       // 전달되면 우선 사용
+  onSubmitDraft,    // 전달되면 우선 사용
 }) {
   const nav = useNavigate();
   const q = useQuery();
@@ -70,6 +70,8 @@ export default function ApprovalComposePage({
   const [files, setFiles] = useState([]);
 
   const [orgModal, setOrgModal] = useState(null); // null | "assignee" | "refs"
+  const [formName, setFormName] = useState("");   // ✅ 폼 이름 표시용
+  const [saving, setSaving] = useState(false);
 
   // 헤더 높이 측정 → 카드 top 오프셋에 반영
   const topOffset = useTopOffset();
@@ -82,31 +84,112 @@ export default function ApprovalComposePage({
     setFiles(list);
   };
 
+  // ✅ sformno로 폼 메타 로딩 (formName 표시)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!sformno || sformno === "신규양식") return;
+      try {
+        const res = await fetch(`/api/approval/forms.item.json?sformno=${encodeURIComponent(sformno)}`, {
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error("forms.item.json 응답 오류");
+        const data = await res.json().catch(() => ({}));
+        // 형태 유연 처리
+        const f =
+          data?.form ||
+          data?.data ||
+          data;
+        const name =
+          f?.formName || f?.FORMNAME || f?.name || "";
+        if (alive) setFormName(String(name || "").trim());
+      } catch (e) {
+        // 폼명을 굳이 막 알리진 않음 (없어도 sformno는 표시됨)
+        console.warn("[compose] form load fail:", e);
+      }
+    })();
+    return () => { alive = false; };
+  }, [sformno]);
+
   const buildPayload = () => ({
     sformno,
     title: title.trim(),
     emergency: emergency ? 1 : 0,
+    // 아래 두 값은 현재 서버 ApprovalVO 시그니처에 직접 매핑되진 않음(추후 확장)
     assignee: assignee ? { id: assignee.eno, name: assignee.name } : null,
     refs: refs.map((r) => ({ id: r.eno, name: r.name })),
     due: dueDate,
-    content,
+    content,                    // 본문
+    signcontent: content,       // 서버에서 signcontent 사용 시 대비
   });
 
+  // 기본 임시저장 API (부모에서 onTempSave 넘기면 그걸 우선 사용)
+  const defaultTempSave = async (payload) => {
+    const res = await fetch("/api/approval/temp-save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return data; // { ok, signNo?, message? }
+  };
+
+  // 기본 제출 API
+  const defaultSubmit = async (payload) => {
+    const res = await fetch("/api/approval/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    return data; // { ok, signNo?, message? }
+  };
+
   const handleTemp = async () => {
-    const res = await onTempSave(buildPayload());
-    alert(res?.ok ? "임시저장 되었습니다." : (res?.message || "임시저장 실패"));
+    if (saving) return;
+    setSaving(true);
+    try {
+      const doSave = typeof onTempSave === "function" ? onTempSave : defaultTempSave;
+      const result = await doSave(buildPayload());
+      alert(result?.ok ? "임시저장 되었습니다." : (result?.message || "임시저장 실패"));
+    } catch (e) {
+      alert("임시저장 중 오류가 발생했습니다.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSubmit = async () => {
     if (!title.trim()) return alert("제목을 입력해 주세요.");
     if (!assignee) return alert("담당자를 선택해 주세요.");
-    const res = await onSubmitDraft(buildPayload());
-    if (res?.ok) {
-      res.signNo
-        ? nav(`/approval/detail/${encodeURIComponent(res.signNo)}`, { replace: true })
-        : nav("/approval", { replace: true });
-    } else {
-      alert(res?.message || "결재요청 실패");
+
+    if (files?.length) {
+      // 현재 서버 JSON 엔드포인트는 파일 수신 X. 후속 업로드 API 열리면 FormData로 확장.
+      // 필요 시 여기서 안내만.
+      console.warn("첨부파일은 현재 JSON 저장에서는 전송되지 않습니다.");
+    }
+
+    if (saving) return;
+    setSaving(true);
+    try {
+      const doSubmit = typeof onSubmitDraft === "function" ? onSubmitDraft : defaultSubmit;
+      const result = await doSubmit(buildPayload());
+      if (result?.ok) {
+        const id = result?.signNo;
+        if (id) {
+          nav(`/approval/detail/${encodeURIComponent(id)}`, { replace: true });
+        } else {
+          nav("/approval", { replace: true });
+        }
+      } else {
+        alert(result?.message || "결재요청 실패");
+      }
+    } catch (e) {
+      alert("결재요청 중 오류가 발생했습니다.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -120,7 +203,7 @@ export default function ApprovalComposePage({
           {/* 헤더 (상세 페이지와 동일한 여백 규칙) */}
           <Header>
             <Title>
-              신규 결재 작성 <Small>({sformno})</Small>
+              신규 결재 작성 <Small>({formName || sformno})</Small>
             </Title>
           </Header>
 
@@ -211,8 +294,8 @@ export default function ApprovalComposePage({
           {/* 하단 고정 액션 (상세 페이지와 동일한 패딩/처리) */}
           <Footer>
             <Actions>
-              <Ghost onClick={handleTemp}>임시저장</Ghost>
-              <Primary onClick={handleSubmit}>결재요청</Primary>
+              <Ghost onClick={handleTemp} disabled={saving}>임시저장</Ghost>
+              <Primary onClick={handleSubmit} disabled={saving}>결재요청</Primary>
             </Actions>
           </Footer>
         </Card>
@@ -257,19 +340,19 @@ const Viewport = styled.div`
 const Card = styled.div`
   width: 100%;
   max-width: 680px;
-  height: 100%;               /* ✅ Viewport 높이를 그대로 사용 */
+  height: 100%;
   background: #fff;
   border: 1px solid #eef1f6;
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(16,24,40,.04);
 
   display: grid;
-  grid-template-rows: auto 1fr auto;  /* 헤더 / 스크롤영역 / 푸터 */
-  overflow: hidden;                   /* 카드 밖으로 넘치지 않게 */
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
 `;
 
 const Header = styled.div`
-  padding: ${GAP}px ${PADX}px 0;      /* 상세 페이지와 동일 패딩 */
+  padding: ${GAP}px ${PADX}px 0;
 `;
 const Title = styled.h2`
   font-size: 16px;
@@ -287,11 +370,10 @@ const Small = styled.small`
 
 /* 카드 내부 스크롤 영역 */
 const ScrollArea = styled.div`
-  min-height: 0;                       /* grid 내부 스크롤 허용 */
-  overflow: auto;                      /* 카드 내부만 스크롤 */
-  padding: 0 ${PADX}px ${PADX}px;      /* 상세 페이지와 동일 패딩 */
+  min-height: 0;
+  overflow: auto;
+  padding: 0 ${PADX}px ${PADX}px;
 
-  /* 스크롤바 스타일도 상세 페이지와 동일 */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,.25) transparent;

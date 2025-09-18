@@ -1,56 +1,114 @@
-// src/components/Approval/ApproveBoxPage.jsx
-import React, { useMemo, useState } from "react";
+// src/components/Approval/CompleteApprovalPage.jsx
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
+import { getApprovalApproveList } from "../motiveOn/api";
 
-/** =========================================================
- *  ApproveBoxPage (모바일 결재 문서함)
- *  - 헤더 아래 고정(position: fixed), 외부 스크롤 제거
- *  - 카드 내부 리스트만 스크롤
- *  - 탭: 내 차례 / 대기 / 승인 / 반려 / 전체
- *  - 검색: 제목 / 기안자 / 부서 / 결재양식
- *  - headerOffset: 상단 고정 헤더 높이(px) — 기본 56
- * ========================================================= */
-export default function ApproveBoxPage({
-  items = MOCK_ITEMS,
-  headerOffset = 56,
-}) {
-  const [tab, setTab] = useState("mine");       // mine | wait | approved | rejected | all
-  const [field, setField] = useState("title");  // title | drafter | dept | form
+export default function CompleteApprovalPage({ headerOffset = 56 }) {
+  const [tab, setTab] = useState("mine");      // mine | wait | approved | rejected | all
+  const [field, setField] = useState("title"); // title | drafter | dept | form
   const [keyword, setKeyword] = useState("");
 
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
+
+  // 응답 키 정규화 (대문자/스네이크 → UI 표준)
+  const normalizeRow = (r = {}) => {
+    const pick = (...keys) => keys.find((k) => r[k] !== undefined);
+    return {
+      signNo:     r[pick("signNo","SIGNNO","signno")],
+      title:      r[pick("title","TITLE")] ?? "",
+      docName:    r[pick("docName","DOCNAME","DOC_NAME","we.NAME","EMP_NAME")] ?? "",
+      docDept:    r[pick("docDept","DOCDEPT","DOC_DEPT","dd.NAME")] ?? "",
+      ddate:      r[pick("ddate","DDATE")] ?? null,
+      edate:      r[pick("edate","EDATE")] ?? null,
+      draftAt:    r[pick("draftAt","DRAFTAT")] ?? r[pick("ddate","DDATE")] ?? null,
+      completeAt: r[pick("completeAt","COMPLETEAT")] ?? r[pick("edate","EDATE")] ?? null,
+      formNo:     r[pick("formNo","FORMNO","SFORMNO")] ?? "",
+      formName:   r[pick("formName","FORMNAME")] ?? r[pick("formNo","FORMNO","SFORMNO")] ?? "",
+      emergency:  Number(r[pick("emergency","EMERGENCY")]) || 0,
+      myState:    r[pick("myState","MYSTATE")] != null ? Number(r[pick("myState","MYSTATE")]) : undefined,
+      docStatus:  r[pick("docStatus","DOCSTATUS","DOC_STATE","STATE")] != null
+                    ? Number(r[pick("docStatus","DOCSTATUS","DOC_STATE","STATE")]) : undefined,
+    };
+  };
+
+  // 목록 조회 (탭별/전체)
+  const fetchList = useCallback(async (override = {}) => {
+    setLoading(true);
+    setErrMsg("");
+    const base = {
+      period: "all",
+      field,
+      q: keyword,
+      page: 1,
+      size: 50,
+      ...override,
+    };
+    try {
+      if (tab === "all") {
+        // JSP의 '전체'처럼 탭별 결과 병합 + 중복 제거
+        const tabs = ["mine", "wait", "approved", "rejected"];
+        const resps = await Promise.all(
+          tabs.map((t) => getApprovalApproveList({ ...base, tab: t }))
+        );
+        const mergedRaw = resps.flatMap((res) =>
+          Array.isArray(res?.data?.content) ? res.data.content :
+          Array.isArray(res?.data?.list)    ? res.data.list :
+          Array.isArray(res?.data)          ? res.data : []
+        );
+        const map = new Map();
+        for (const r of mergedRaw) {
+          const n = normalizeRow(r);
+          if (n?.signNo != null && !map.has(n.signNo)) map.set(n.signNo, n);
+        }
+        const list = [...map.values()];
+        setRows(list);
+        setTotal(list.length);
+      } else {
+        const res = await getApprovalApproveList({ ...base, tab });
+        let raw =
+          Array.isArray(res?.data?.content) ? res.data.content :
+          Array.isArray(res?.data?.list)    ? res.data.list :
+          Array.isArray(res?.data)          ? res.data : [];
+        const list = raw.map(normalizeRow);
+        setRows(list);
+        const totalVal =
+          (typeof res?.data?.totalElements === "number" && res.data.totalElements) ||
+          (typeof res?.data?.totalCount === "number" && res.data.totalCount) ||
+          list.length;
+        setTotal(totalVal);
+      }
+    } catch (e) {
+      console.error("[CompleteApprovalPage] load fail:", e);
+      setErrMsg("목록을 불러오지 못했습니다.");
+      setRows([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }, [tab, field, keyword]);
+
+  // 최초 + 탭 변경 시
+  useEffect(() => { fetchList(); }, [tab, fetchList]);
+
+  // 검색 실행(엔터/버튼)
+  const handleSearch = () => fetchList();
+
+  // 클라이언트측 2차 필터(입력중 즉시)
   const filtered = useMemo(() => {
     const kw = (keyword || "").trim().toLowerCase();
-
-    return (items || []).filter((r) => {
-      const code = statusCodeOf(r.docStatus, r.myState);
-      const isMine = r.isMine ?? (code === "WAIT"); // 서버 값이 없으면 WAIT을 내 차례로 간주
-
-      const tabOk =
-        tab === "all"
-          ? true
-          : tab === "mine"
-          ? isMine
-          : tab === "wait"
-          ? code === "WAIT"
-          : tab === "approved"
-          ? code === "DONE"
-          : tab === "rejected"
-          ? code === "REJECT"
-          : true;
-
-      if (!tabOk) return false;
-
-      // 검색 필드
+    return (rows || []).filter((r) => {
       let val = "";
-      if (field === "title") val = r.title || "";
+      if (field === "title")      val = r.title || "";
       else if (field === "drafter") val = r.docName || "";
-      else if (field === "dept") val = r.docDept || "";
-      else if (field === "form") val = r.formName || r.formNo || "";
-
-      return kw === "" || val.toLowerCase().includes(kw);
+      else if (field === "dept")    val = r.docDept || "";
+      else if (field === "form")    val = r.formName || r.formNo || "";
+      return kw === "" || String(val).toLowerCase().includes(kw);
     });
-  }, [items, tab, field, keyword]);
+  }, [rows, field, keyword]);
 
   return (
     <Wrapper style={{ top: headerOffset }}>
@@ -62,17 +120,17 @@ export default function ApproveBoxPage({
             <Card>
               <CardHeader>
                 <span>결재 문서함</span>
-                <CountText>(총 {filtered.length}건)</CountText>
+                <CountText>(총 {total}건)</CountText>
               </CardHeader>
 
               <CardBody>
                 <HeaderRow>
                   <Tabs>
-                    <Tab $active={tab === "mine"} onClick={() => setTab("mine")}>내 차례</Tab>
-                    <Tab $active={tab === "wait"} onClick={() => setTab("wait")}>대기</Tab>
+                    <Tab $active={tab === "mine"}     onClick={() => setTab("mine")}>내 차례</Tab>
+                    <Tab $active={tab === "wait"}     onClick={() => setTab("wait")}>대기</Tab>
                     <Tab $active={tab === "approved"} onClick={() => setTab("approved")}>승인</Tab>
                     <Tab $active={tab === "rejected"} onClick={() => setTab("rejected")}>반려</Tab>
-                    <Tab $active={tab === "all"} onClick={() => setTab("all")}>전체</Tab>
+                    <Tab $active={tab === "all"}      onClick={() => setTab("all")}>전체</Tab>
                   </Tabs>
 
                   <SearchBar>
@@ -86,15 +144,18 @@ export default function ApproveBoxPage({
                       value={keyword}
                       placeholder="검색어를 입력하세요."
                       onChange={(e) => setKeyword(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
                     />
-                    <SearchBtn type="button" title="검색">🔎</SearchBtn>
+                    <SearchBtn type="button" title="검색" onClick={handleSearch}>🔎</SearchBtn>
                   </SearchBar>
                 </HeaderRow>
 
-                {/* ✅ 카드 내부만 스크롤 */}
                 <ScrollArea>
-                  {filtered.length === 0 ? (
+                  {loading ? (
+                    <Empty>불러오는 중…</Empty>
+                  ) : errMsg ? (
+                    <Empty>{errMsg}</Empty>
+                  ) : filtered.length === 0 ? (
                     <Empty>표시할 문서가 없습니다.</Empty>
                   ) : (
                     <MobileList>
@@ -113,7 +174,7 @@ export default function ApproveBoxPage({
   );
 }
 
-/* ===================== Item Card ===================== */
+/* ====== 카드/헬퍼 ====== */
 function ApproveDocCard({ row }) {
   const navigate = useNavigate();
   const code = statusCodeOf(row.docStatus, row.myState);
@@ -126,7 +187,7 @@ function ApproveDocCard({ row }) {
         <div className="titleLeft">
           <a
             href="#"
-            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail?signNo=${row.signNo}`); }}
+            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail/${row.signNo}`); }}
             className="title"
             title={row.title}
             style={{ color: "inherit", textDecoration: "none" }}
@@ -156,7 +217,6 @@ function ApproveDocCard({ row }) {
   );
 }
 
-/* ===================== helpers ===================== */
 function statusCodeOf(docStatus, myState) {
   if (docStatus === 3) return "DONE";
   if (docStatus === 6) return "HOLD";
@@ -181,7 +241,7 @@ function StatusPill({ code }) {
   if (code === "DONE") return <Badge className="done">완료</Badge>;
   if (code === "HOLD") return <Badge className="hold">보류</Badge>;
   if (code === "REJECT") return <Badge className="rej">반려</Badge>;
-  if (code === "PROG") return <Badge className="prog">진행중</Badge>;
+  if (code === "PROG") return <Badge className="prog">진행중</Badge>; // JSP와 동일
   return <Badge className="wait">대기</Badge>;
 }
 
@@ -413,4 +473,3 @@ const Badge = styled.span`
   &.hold { background:rgba(244,180,0,.16); color:#C48A00; }
   &.rej  { background:#fde8e8; color:#b01818; }
 `;
-

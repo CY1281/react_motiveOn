@@ -1,57 +1,161 @@
-// src/components/Approval/ReferenceBoxPage.jsx
-import React, { useMemo, useState } from "react";
+// src/components/Approval/TempApprovalPage.jsx
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
+import { getApprovalTempList, deleteTempApprovals } from "../motiveOn/api";
 
 /** =========================================================
- *  ReferenceBoxPage (모바일 참조 문서함)
- *  - 화면 상단 헤더 아래에 "고정" (position: fixed)
- *  - 외부 스크롤 제거, 카드 내부 리스트만 스크롤
+ *  TempApprovalPage (모바일 임시 문서함)
+ *  - 서버 데이터만 사용 (더미 제거)
+ *  - 카드 내부 리스트만 스크롤
+ *  - 체크박스로 다중 선택 삭제
  *  - headerOffset: 상단 고정 헤더 높이(px) (기본 56)
  * ========================================================= */
-export default function ReferenceBoxPage({
-  items = MOCK_ITEMS,
+export default function TempApprovalPage({
   headerOffset = 56,
+  onDeleteSelected, // 있으면 그걸 사용, 없으면 기본 서버삭제 사용
 }) {
-  const [tab, setTab] = useState("ALL");        // ALL | WAIT | ING | HOLD | DONE
-  const [field, setField] = useState("title");  // title | form | drafter
+  const [data, setData] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [field, setField] = useState("title");   // title | form | drafter
   const [keyword, setKeyword] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
+
+  // 응답 키 정규화 (대문자/스네이크 → UI 표준)
+  const normalizeRow = (r = {}) => {
+    const pick = (...keys) => keys.find((k) => r[k] !== undefined);
+    return {
+      signNo:     r[pick("signNo","SIGNNO","signno","SIGN_NO")] ?? r.signNo,
+      title:      r[pick("title","TITLE")] ?? "",
+      formName:   r[pick("formName","FORMNAME","form_name")] ?? r[pick("formNo","FORMNO","SFORMNO")] ?? "",
+      formNo:     r[pick("formNo","FORMNO","SFORMNO")] ?? "",
+      draftAt:    r[pick("draftAt","DRAFTAT","ddate","DDATE","REGDATE")] ?? null,
+      completeAt: r[pick("completeAt","COMPLETEAT","edate","EDATE","COMPLETE_AT")] ?? null,
+      emergency:  Number(r[pick("emergency","EMERGENCY")]) || 0,
+      docStatus:  Number(r[pick("docStatus","DOCSTATUS","STATE")]) || 0,
+      drafterName: r[pick("drafterName","DRAFTERNAME","drafter_name","DRAFTER_NAME")] ?? "",
+    };
+  };
+
+  // 로드 함수 (재시도 버튼에서도 사용)
+  const load = async () => {
+    try {
+      setLoading(true);
+      setErrMsg("");
+      const res = await getApprovalTempList({ page: 1, size: 50 });
+      const ct = (res?.headers?.["content-type"] || "").toLowerCase();
+      if (!ct.includes("application/json")) throw new Error("JSON이 아닌 응답");
+
+      const raw = Array.isArray(res?.data?.content)
+        ? res.data.content
+        : Array.isArray(res?.data?.list)
+        ? res.data.list
+        : [];
+
+      const list = raw.map(normalizeRow);
+      setData(list);
+    } catch (e) {
+      console.error("[TempApprovalPage] load fail:", e);
+      setErrMsg("목록을 불러오지 못했습니다.");
+      setData([]); // 더미 없이 빈 배열
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 최초 로드
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     const kw = (keyword || "").trim().toLowerCase();
-    return (items || []).filter((r) => {
-      const code = statusCodeOf(r.docStatus);
-      const tabOk = tab === "ALL" || code === tab;
-
+    return (data || []).filter((r) => {
       let val = "";
       if (field === "title") val = r.title || "";
       else if (field === "form") val = r.formName || r.formNo || "";
       else if (field === "drafter") val = r.drafterName || "";
-
-      const kwOk = kw === "" || val.toLowerCase().includes(kw);
-      return tabOk && kwOk;
+      if (!kw) return true;
+      return String(val).toLowerCase().includes(kw);
     });
-  }, [items, tab, field, keyword]);
+  }, [data, field, keyword]);
+
+  const allIdsOnScreen = filtered.map((r) => r.signNo);
+  const allCheckedOnScreen =
+    allIdsOnScreen.length > 0 && allIdsOnScreen.every((id) => selected.has(id));
+
+  const toggleOne = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllOnScreen = (checked) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) allIdsOnScreen.forEach((id) => next.add(id));
+      else allIdsOnScreen.forEach((id) => next.delete(id));
+      return next;
+    });
+  };
+
+  const handleDelete = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return alert("삭제할 문서를 선택하세요.");
+    if (!confirm(`선택한 ${ids.length}건을 삭제하시겠습니까?`)) return;
+
+    try {
+      if (onDeleteSelected) {
+        await onDeleteSelected(ids);
+      } else {
+        // 기본 서버 삭제 호출 (컨트롤러: /api/approval/temp/delete.json)
+        const res = await deleteTempApprovals(ids);
+        if (res?.data?.ok === false) throw new Error(res.data.message || "삭제 실패");
+      }
+      // 프론트 목록에서도 제거
+      setData((prev) => prev.filter((r) => !selected.has(r.signNo)));
+      setSelected(new Set());
+    } catch (e) {
+      console.error(e);
+      alert("삭제 중 오류가 발생했습니다.");
+    }
+  };
 
   return (
     <Wrapper style={{ top: headerOffset }}>
       <Frame>
-        <PageHeader>참조 문서함</PageHeader>
+        <PageHeader>임시 문서함</PageHeader>
 
         <Content>
           <Section>
             <Card>
-              <CardHeader>참조 문서 목록</CardHeader>
+              <CardHeader>
+                임시 보관함
+                <BtnDelete
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={selected.size === 0}
+                  aria-label="선택 삭제"
+                >
+                  🗑 삭제{selected.size > 0 ? ` (${selected.size})` : ""}
+                </BtnDelete>
+              </CardHeader>
 
               <CardBody>
                 <HeaderRow>
-                  <Tabs>
-                    <Tab $active={tab === "ALL"}  onClick={() => setTab("ALL")}>전체</Tab>
-                    <Tab $active={tab === "WAIT"} onClick={() => setTab("WAIT")}>대기</Tab>
-                    <Tab $active={tab === "ING"}  onClick={() => setTab("ING")}>진행</Tab>
-                    <Tab $active={tab === "HOLD"} onClick={() => setTab("HOLD")}>보류</Tab>
-                    <Tab $active={tab === "DONE"} onClick={() => setTab("DONE")}>완료</Tab>
-                  </Tabs>
+                  <MasterSelect>
+                    <input
+                      id="masterCheck"
+                      type="checkbox"
+                      checked={allCheckedOnScreen}
+                      onChange={(e) => toggleAllOnScreen(e.target.checked)}
+                    />
+                    <label htmlFor="masterCheck">전체선택</label>
+                  </MasterSelect>
 
                   <SearchBar>
                     <Select value={field} onChange={(e) => setField(e.target.value)}>
@@ -65,18 +169,36 @@ export default function ReferenceBoxPage({
                       onChange={(e) => setKeyword(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                     />
-                    <SearchBtn type="button" title="검색">🔎</SearchBtn>
+                    <SearchBtn
+                      type="button"
+                      title="검색"
+                      onClick={() => {/* 서버 검색 필요 시 쿼리 파라미터 붙여서 재호출 */}}
+                    >
+                      🔎
+                    </SearchBtn>
                   </SearchBar>
                 </HeaderRow>
 
-                {/* ✅ 카드 내부만 세로 스크롤 (스크롤바도 카드 라운드 안쪽) */}
+                {/* 카드 내부만 세로 스크롤 */}
                 <ScrollArea>
-                  {filtered.length === 0 ? (
+                  {loading ? (
+                    <Empty>불러오는 중…</Empty>
+                  ) : errMsg ? (
+                    <Empty>
+                      {errMsg}{" "}
+                      <Retry type="button" onClick={load}>다시 시도</Retry>
+                    </Empty>
+                  ) : filtered.length === 0 ? (
                     <Empty>표시할 문서가 없습니다.</Empty>
                   ) : (
                     <MobileList>
                       {filtered.map((row) => (
-                        <DocCard key={row.signNo} row={row} />
+                        <TempDocCard
+                          key={row.signNo}
+                          row={row}
+                          checked={selected.has(row.signNo)}
+                          onToggle={() => toggleOne(row.signNo)}
+                        />
                       ))}
                     </MobileList>
                   )}
@@ -91,47 +213,44 @@ export default function ReferenceBoxPage({
 }
 
 /* ===================== Item Card ===================== */
-function DocCard({ row }) {
+function TempDocCard({ row, checked, onToggle }) {
   const navigate = useNavigate();
+  const lastDate = row.completeAt || row.draftAt;
+
   return (
     <CardItem>
-      {/* 1행: 제목 + 긴급 + 상태 */}
+      {/* 1행: 제목 + 체크박스 */}
       <div className="titleRow">
         <div className="titleLeft">
           <a
             href="#"
-            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail?signNo=${row.signNo}`); }}
+            onClick={(e) => { e.preventDefault(); navigate(`/approval/detail/${row.signNo}`); }}
             className="title"
             title={row.title}
             style={{ color: "inherit", textDecoration: "none" }}
           >
             {row.title}
           </a>
-          {row.emergency === 1 && (
-            <Badge className="emergency" $size="sm">⚡ 긴급</Badge>
-          )}
         </div>
+
         <div className="right">
-          <StatusPill docStatus={row.docStatus} />
+          <CheckWrap>
+            <input id={`ck-${row.signNo}`} type="checkbox" checked={checked} onChange={onToggle} />
+            <label htmlFor={`ck-${row.signNo}`} />
+          </CheckWrap>
         </div>
       </div>
 
       {/* 2행: 양식이름 | 날짜(~ yyyy.MM.dd) */}
       <div className="sub">
         <span>{row.formName ?? row.formNo}</span>
-        <span className="date">{formatDotDate(row.draftAt || row.completeAt)}</span>
+        <span className="date">{formatDotDate(lastDate)}</span>
       </div>
     </CardItem>
   );
 }
 
 /* ===================== helpers ===================== */
-function statusCodeOf(docStatus) {
-  if (docStatus === 3) return "DONE";
-  if (docStatus === 6) return "HOLD";
-  if (docStatus === 0) return "WAIT";
-  return "ING";
-}
 function formatDateLike(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -145,37 +264,28 @@ function formatDotDate(value) {
   const s = formatDateLike(value);
   return s ? `~ ${s.replaceAll("-", ".")}` : "";
 }
-function StatusPill({ docStatus }) {
-  const code = statusCodeOf(docStatus);
-  if (code === "DONE") return <Badge className="done">완료</Badge>;
-  if (code === "HOLD") return <Badge className="hold">보류</Badge>;
-  if (code === "WAIT") return <Badge className="wait">대기</Badge>;
-  return <Badge className="prog">진행중</Badge>;
-}
 
 /* ===================== styled ===================== */
-/* 페이지 자체를 헤더 아래에 "고정" */
+/* 페이지 전체를 헤더 아래에 고정해서 외부 스크롤 제거 */
 const Wrapper = styled.div`
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* top은 props에서 style로 주입 (headerOffset) */
+  left: 0; right: 0; bottom: 0;
+  /* top은 props로 주입: headerOffset */
   background: #fff;
   display: grid;
-  place-items: center;    /* 가운데 정렬 */
-  overflow: hidden;       /* 외부 스크롤 방지 */
+  place-items: center;
+  overflow: hidden;
   z-index: 0;
 `;
 
 const Frame = styled.div`
   width: 100%;
-  max-width: 420px;       /* 필요시 440~480px 조절 */
+  max-width: 420px;
   height: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;       /* 외곽으로 새는 스크롤/바운스 방지 */
+  overflow: hidden;
 `;
 
 const PageHeader = styled.header`
@@ -190,12 +300,12 @@ const PageHeader = styled.header`
 const Content = styled.div`
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;       /* 외부 스크롤 없음 */
+  overflow: hidden;
 `;
 
 const Section = styled.section`
   height: 90%;
-  padding: 8px 0;         /* 좌우 여백 제거 */
+  padding: 8px 0;
   &:last-of-type { padding-bottom: 0; }
   min-height: 0;
 `;
@@ -206,19 +316,29 @@ const Card = styled.div`
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
-  margin: 0 8px;          /* 카드 좌우만 살짝 여백 */
+  margin: 0 8px;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;       /* 스크롤바를 카드 라운드 안쪽으로 가둠 */
+  overflow: hidden; /* 스크롤바를 카드 라운드 안쪽으로 */
 `;
 
 const CardHeader = styled.div`
+  position: relative;
   flex: 0 0 auto;
   padding: 8px 12px;
   font-weight: 700;
   font-size: 14px;
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+`;
+
+const BtnDelete = styled.button`
+  position: absolute; right: 10px; top: 6px;
+  height: 25px; padding: 0 10px;
+  border-radius: 8px; border: 1px solid #e5e7eb;
+  background: ${({ disabled }) => (disabled ? "#f5f5f5" : "#fff")};
+  color: ${({ disabled }) => (disabled ? "#a1a1a1" : "#d12b2b")};
+  font-weight: 700;
 `;
 
 const CardBody = styled.div`
@@ -238,9 +358,8 @@ const ScrollArea = styled.div`
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
 
-  /* 스크롤바 스타일 (카드 안쪽에 표시) */
   scrollbar-gutter: stable;
-  scrollbar-width: thin;                 /* Firefox */
+  scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,.25) transparent;
 
   &::-webkit-scrollbar { width: 8px; }
@@ -253,7 +372,6 @@ const ScrollArea = styled.div`
   }
 `;
 
-/* 상단 컨트롤 */
 const HeaderRow = styled.div`
   flex: 0 0 auto;
   display: flex;
@@ -264,23 +382,10 @@ const HeaderRow = styled.div`
   min-width: 0;
 `;
 
-const Tabs = styled.div`
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid rgba(0,0,0,.06);
-  min-width: 0;
-`;
-const Tab = styled.button`
-  appearance: none;
-  border: 1px solid #ccc;
-  border-bottom: none;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-  background: ${({ $active }) => ($active ? "#6ec1e4" : "#ddd")};
-  color: ${({ $active }) => ($active ? "#000" : "#333")};
-  border-radius: 6px 6px 0 0;
-  & + & { margin-left: -1px; }
+const MasterSelect = styled.div`
+  display: inline-flex; align-items: center; gap: 8px;
+  input[type="checkbox"]{ width: 18px; height: 18px; }
+  label{ font-size: 13px; color: #4b5563; }
 `;
 
 const SearchBar = styled.div`
@@ -304,12 +409,11 @@ const SearchBtn = styled.button`
   background: #2C3E50; color: #fff; cursor: pointer;
 `;
 
-/* 리스트 */
 const MobileList = styled.ul`
   display: grid;
   gap: 10px;
   margin: 0;
-  padding: 0 0 6px;        /* 마지막 아이템 하단 여유 */
+  padding: 0 0 6px;
   list-style: none;
   overflow-x: hidden;
 `;
@@ -349,6 +453,24 @@ const CardItem = styled.li`
   .date { margin-left: auto; font-size: 12px; color: #6B7280; }
 `;
 
+/* 체크박스(상태 자리) */
+const CheckWrap = styled.span`
+  input { display: none; }
+  label {
+    width: 22px; height: 22px; border-radius: 6px;
+    display: inline-block; border: 2px solid #c7ccd6; background: #fff;
+    position: relative; cursor: pointer;
+  }
+  input:checked + label {
+    background: #3A8DFE; border-color: #3A8DFE;
+  }
+  input:checked + label::after{
+    content:""; position:absolute; left:6px; top:2px;
+    width:6px; height:12px; border:2px solid #fff;
+    border-left:0; border-top:0; transform: rotate(45deg);
+  }
+`;
+
 const Empty = styled.div`
   color: #95A1AF;
   text-align: center;
@@ -356,16 +478,11 @@ const Empty = styled.div`
   font-size: 13px;
 `;
 
-const Badge = styled.span`
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: ${({ $size }) => ($size === "sm" ? "3px 8px" : "6px 12px")};
-  border-radius: 999px; font-size: ${({ $size }) => ($size === "sm" ? "11px" : "12px")};
-  font-weight: 800;
-
-  &.emergency { background:#FDE8E8; color:#B01818; border:1px solid #F5C2C2; }
-  &.wait { background:#EEF2F6; color:#6B7280; }
-  &.prog { background:rgba(58,141,254,.12); color:#3A8DFE; }
-  &.done { background:rgba(39,174,96,.12); color:#27AE60; }
-  &.hold { background:rgba(244,180,0,.16); color:#C48A00; }
+const Retry = styled.button`
+  margin-left: 8px;
+  padding: 4px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
 `;
-

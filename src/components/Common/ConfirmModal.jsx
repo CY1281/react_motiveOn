@@ -29,7 +29,7 @@ const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }) => {
         }}
       >
         {title && <h3 style={{ marginBottom: "10px" }}>{title}</h3>}
-        <p style={{ fontSize: "14px", marginBottom: "20px" }}>{message}</p>
+        <p style={{ fontSize: "14px", marginBottom: "20px", whiteSpace: "pre-line"}}>{message}</p>
         <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
           <button
             onClick={onCancel}

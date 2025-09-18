@@ -3,19 +3,22 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import FormPickerPage from "./FormPickerPage";
-import useModalStore from "../../store/modalStore";
+import BottomSheetModal from "../Common/BottomSheetModal"; // ← 경로/대소문자 확인
+import { getApprovalDraftList } from "../motiveOn/api";
 
-export default function DraftApprovalPage({
-  items = MOCK_ITEMS,
-  headerOffset = 56,
-  onNewDraft,
-}) {
+export default function DraftApprovalPage({ headerOffset = 56, onNewDraft }) {
   const navigate = useNavigate();
-  const { openModal, closeModal } = useModalStore();
+
+  // ✅ 바텀시트(폼 피커) - 단일 상태만 사용
+  const [showFormPicker, setShowFormPicker] = useState(false);
 
   const [tab, setTab] = useState("ALL");        // ALL | WAIT | ING | HOLD | DONE
   const [field, setField] = useState("title");  // title | form | drafter
   const [keyword, setKeyword] = useState("");
+
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
 
   // 페이지 전체 스크롤 잠금
   useEffect(() => {
@@ -24,9 +27,60 @@ export default function DraftApprovalPage({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
+  // 응답 키 정규화
+  const normalizeRow = (r = {}) => {
+    const pick = (...keys) => keys.find((k) => r[k] !== undefined);
+    return {
+      signNo:       r[pick("signNo","SIGNNO","signno","SIGN_NO")] ?? r.signNo,
+      title:        r[pick("title","TITLE")] ?? "",
+      formName:
+  r[pick("formName","FORMNAME","form_name",
+         "CLASSNAME","CLASS_NAME","CLS.CLASSNAME","cls.CLASSNAME")]
+  ?? r[pick("formNo","FORMNO","SFORMNO")]
+  ?? "",
+      formNo:       r[pick("formNo","FORMNO","SFORMNO")] ?? "",
+      draftAt:      r[pick("draftAt","DRAFTAT","ddate","DDATE","UPDATED_OR_END")] ?? null,
+      completeAt:   r[pick("completeAt","COMPLETEAT","edate","EDATE")] ?? null,
+      emergency:    Number(r[pick("emergency","EMERGENCY")]) || 0,
+      docStatus:    Number(r[pick("docStatus","DOCSTATUS","STATE","DOC_STATE")]) || 0,
+      drafterName:  r[pick("drafterName","DRAFTERNAME","drafter_name","DOC_NAME","EMP_NAME")] ?? "",
+    };
+  };
+
+  // 서버 로드
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setLoading(true);
+        setErrMsg("");
+        const res = await getApprovalDraftList({
+          page: 1, size: 50, period: "all", field: "title", q: ""
+        });
+
+        const raw = Array.isArray(res?.data?.content)
+          ? res.data.content
+          : Array.isArray(res?.data?.list)
+          ? res.data.list
+          : Array.isArray(res?.data)
+          ? res.data
+          : [];
+
+        const list = raw.map(normalizeRow);
+        if (alive) setData(list);
+      } catch (e) {
+        console.error("[DraftApprovalPage] load fail:", e);
+        if (alive) setErrMsg("목록을 불러오지 못했습니다.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   const filtered = useMemo(() => {
     const kw = (keyword || "").trim().toLowerCase();
-    return (items || []).filter((r) => {
+    return (data || []).filter((r) => {
       const code = statusCodeOf(r.docStatus);
       const tabOk = tab === "ALL" || code === tab;
 
@@ -35,33 +89,43 @@ export default function DraftApprovalPage({
       else if (field === "form") val = r.formName || r.formNo || "";
       else if (field === "drafter") val = r.drafterName || "";
 
-      const kwOk = kw === "" || val.toLowerCase().includes(kw);
+      const kwOk = kw === "" || String(val).toLowerCase().includes(kw);
       return tabOk && kwOk;
     });
-  }, [items, tab, field, keyword]);
+  }, [data, tab, field, keyword]);
 
-  // “새 결재” → 전역 모달로 양식 선택 띄우기
+  // ✅ 서버 작성화면 이동 유틸
+  const goCompose = (sformno) => {
+    const url = `/approval/compose?sformno=${encodeURIComponent(sformno)}`;
+    try {
+      window.location.assign(url); // 서버 페이지로 이동
+    } catch {
+      navigate(url, { replace: true }); // (SPA 라우트가 있을 때만)
+    }
+  };
+
+  // “새 결재” 버튼 → 바텀시트 열기
   const handleNewDraft = () => {
     if (typeof onNewDraft === "function") {
       onNewDraft();
       return;
     }
-    openModal(
-      <FormPickerPage
-        onPick={(sformno) => {
-          closeModal();
-          const url = `/approval/compose?sformno=${encodeURIComponent(sformno)}`;
-          // 라우팅 충돌/고정뷰 이슈를 우회하기 위한 하드 네비 + 폴백
-          setTimeout(() => {
-            try {
-              window.location.assign(url);
-            } catch {
-              navigate(url, { replace: true });
-            }
-          }, 0);
-        }}
-      />
-    );
+    setShowFormPicker(true); // ← 여기만 켜면 됨
+  };
+
+  // 폼 선택 시 작성화면으로 이동
+  const handlePickForm = (picked) => {
+    const sformno =
+      typeof picked === "string"
+        ? picked
+        : picked?.sformno || picked?.SFORMNO || picked?.formNo || picked?.FORMNO;
+
+    if (!sformno) {
+      alert("양식 번호(sformno)를 확인할 수 없습니다.");
+      return;
+    }
+    setShowFormPicker(false);
+    goCompose(sformno);
   };
 
   return (
@@ -107,7 +171,11 @@ export default function DraftApprovalPage({
                   </HeaderRow>
 
                   <ScrollArea>
-                    {filtered.length === 0 ? (
+                    {loading ? (
+                      <Empty>불러오는 중…</Empty>
+                    ) : errMsg ? (
+                      <Empty>{errMsg}</Empty>
+                    ) : filtered.length === 0 ? (
                       <Empty>표시할 문서가 없습니다.</Empty>
                     ) : (
                       <MobileList>
@@ -123,6 +191,15 @@ export default function DraftApprovalPage({
           </Content>
         </Frame>
       </Wrapper>
+
+      {/* ✅ 바텀시트 모달: 양식 선택을 바로 표시 */}
+      <BottomSheetModal
+        isOpen={showFormPicker}
+        title="결재 양식 선택"
+        onCancel={() => setShowFormPicker(false)}
+      >
+        <FormPickerPage onPick={handlePickForm} />
+      </BottomSheetModal>
     </>
   );
 }
@@ -383,4 +460,3 @@ const Badge = styled.span`
   &.done { background:rgba(39,174,96,.12); color:#27AE60; }
   &.hold { background:rgba(244,180,0,.16); color:#C48A00; }
 `;
-

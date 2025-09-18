@@ -1,20 +1,21 @@
 // src/components/Approval/ApprovalDetailPage.jsx
-import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import styled, { css } from "styled-components";
+import { getApprovalDetail } from "../motiveOn/api";
 
 /* ===== (기존 값 유지) 컴팩트 토큰 ===== */
-const H = 28;
-const FONT = 12;
+const H = 30;
+const FONT = 13;
 const GAP = 8;
 const PADX = 8;
 /* 작성 페이지와 동일한 외부 패딩 값 */
 const OUTPAD = 12;
 
 export default function ApprovalDetailPage({
-  doc = MOCK_DOC,
-  lines = MOCK_LINES,
-  refs = MOCK_REFS,
+  doc: initialDoc = null,
+  lines: initialLines = [],
+  refs: initialRefs = [],
   headerOffset = 56,
   onBack,
   onList,
@@ -22,7 +23,63 @@ export default function ApprovalDetailPage({
   onReject,
 }) {
   const nav = useNavigate();
-  const [comment, setComment] = useState("");
+  const { signNo: routeSignNo } = useParams();
+
+  // ✅ 외부(바디) 스크롤 잠금
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // 상세 데이터 상태
+  const [doc, setDoc] = useState(initialDoc);
+  const [lines, setLines] = useState(initialLines);
+  const [refs, setRefs] = useState(initialRefs);
+  const [loading, setLoading] = useState(!initialDoc); // 초기 데이터 없으면 로딩 시작
+  const [errMsg, setErrMsg] = useState("");
+
+  // 서버에서 상세 조회
+  useEffect(() => {
+    let alive = true;
+    const signNo = routeSignNo;
+
+    async function run() {
+      if (!signNo) return;
+      try {
+        setLoading(true);
+        setErrMsg("");
+        const res = await getApprovalDetail(signNo);
+        const ok = res?.data?.ok;
+        if (!ok) throw new Error(res?.data?.message || "상세를 불러오지 못했습니다.");
+
+        const d  = res?.data?.doc ?? null;
+        const ls = Array.isArray(res?.data?.lines) ? res.data.lines : [];
+        const rf = Array.isArray(res?.data?.refs)  ? res.data.refs  : [];
+
+        if (!alive) return;
+        setDoc(d);
+        setLines(ls);
+        setRefs(rf);
+      } catch (e) {
+        console.error("[detail] load fail:", e);
+        if (!alive) return;
+        setErrMsg("상세를 불러오지 못했습니다.");
+        // 폴백: 초기 프롭이 있으면 그대로 유지
+        if (!initialDoc) {
+          setDoc(null);
+          setLines([]);
+          setRefs([]);
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    run();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeSignNo]);
 
   const stateText = useMemo(() => statusTextOf(doc?.docStatus), [doc?.docStatus]);
   const stateType = useMemo(() => statusTypeOf(doc?.docStatus), [doc?.docStatus]);
@@ -33,14 +90,24 @@ export default function ApprovalDetailPage({
 
   const submitApprove = async () => {
     if (!window.confirm("승인하시겠습니까?")) return;
-    try { if (onApprove) await onApprove({ signNo: doc?.signNo, comment, action: "approve" }); alert("승인되었습니다."); }
-    catch { alert("승인 중 오류가 발생했습니다."); }
+    try {
+      if (onApprove) await onApprove({ signNo: doc?.signNo, comment, action: "approve" });
+      alert("승인되었습니다.");
+    } catch {
+      alert("승인 중 오류가 발생했습니다.");
+    }
   };
   const submitReject = async () => {
     if (!window.confirm("반려하시겠습니까?")) return;
-    try { if (onReject) await onReject({ signNo: doc?.signNo, comment, action: "reject" }); alert("반려되었습니다."); }
-    catch { alert("반려 중 오류가 발생했습니다."); }
+    try {
+      if (onReject) await onReject({ signNo: doc?.signNo, comment, action: "reject" });
+      alert("반려되었습니다.");
+    } catch {
+      alert("반려 중 오류가 발생했습니다.");
+    }
   };
+
+  const [comment, setComment] = useState("");
 
   return (
     <Wrapper style={{ top: headerOffset }}>
@@ -49,123 +116,131 @@ export default function ApprovalDetailPage({
           <h3 className="title">전자결재</h3>
           <div className="actions">
             <Btn $variant="ghost" onClick={handleList}>목록</Btn>
-            <Btn $variant="ghost" onClick={handleBack}>뒤로</Btn>
-            <Btn $variant="primary" onClick={handlePrint}>인쇄</Btn>
           </div>
         </Topbar>
 
         <ScrollArea>
-          <Row>
-            <Label>제목</Label>
-            <TitleField>
-              <Read value={safe(doc?.title, "-")} readOnly />
-              {Number(doc?.emergency) === 1 && <BadgeEmIn>긴급</BadgeEmIn>}
-            </TitleField>
-          </Row>
+          {loading ? (
+            <EmptyBox>불러오는 중…</EmptyBox>
+          ) : errMsg ? (
+            <EmptyBox>{errMsg}</EmptyBox>
+          ) : !doc ? (
+            <EmptyBox>문서를 찾을 수 없습니다.</EmptyBox>
+          ) : (
+            <>
+              <Row>
+                <Label>제목</Label>
+                <TitleField>
+                  <Read value={safe(doc?.title, "-")} readOnly />
+                  {Number(doc?.emergency) === 1 && <BadgeEmIn>긴급</BadgeEmIn>}
+                </TitleField>
+              </Row>
 
-          <Row2>
-            <FormGroup>
-              <Label>문서번호</Label>
-              <Read value={safe(doc?.signNo, "-")} readOnly />
-            </FormGroup>
-            <FormGroup>
-              <Label>요청자</Label>
-              <Read value={safe(doc?.drafterName, "-")} readOnly />
-            </FormGroup>
-          </Row2>
+              <Row2>
+                <FormGroup>
+                  <Label>문서번호</Label>
+                  <Read value={safe(doc?.signNo, "-")} readOnly />
+                </FormGroup>
+                <FormGroup>
+                  <Label>요청자</Label>
+                  <Read value={safe(doc?.drafterName, "-")} readOnly />
+                </FormGroup>
+              </Row2>
 
-          <Row2>
-            <FormGroup>
-              <Label>기안일</Label>
-              <Read value={formatDateTime(doc?.draftAt) || "-"} readOnly />
-            </FormGroup>
-            <FormGroup>
-              <Label>완료일</Label>
-              <Read value={formatDateTime(doc?.completeAt) || "-"} readOnly />
-            </FormGroup>
-          </Row2>
+              <Row2>
+                <FormGroup>
+                  <Label>기안일</Label>
+                  <Read value={formatDateTime(doc?.draftAt) || "-"} readOnly />
+                </FormGroup>
+                <FormGroup>
+                  <Label>완료일</Label>
+                  <Read value={formatDateTime(doc?.completeAt) || "-"} readOnly />
+                </FormGroup>
+              </Row2>
 
-          <Row2>
-            <FormGroup>
-              <Label>상태</Label>
-              <StatusPill $type={stateType}>{stateText}</StatusPill>
-            </FormGroup>
-            <FormGroup>{/* 2열 정렬 유지용 빈 칸 */}</FormGroup>
-          </Row2>
+              <Row2>
+                <FormGroup>
+                  <Label>상태</Label>
+                  <StatusPill $type={stateType}>{stateText}</StatusPill>
+                </FormGroup>
+                <FormGroup>{/* 2열 정렬 유지용 빈 칸 */}</FormGroup>
+              </Row2>
 
-          <Row>
-            <Label>내용</Label>
-            <Viewer
-              dangerouslySetInnerHTML={{
-                __html:
-                  (doc?.signcontent ?? "").trim() ||
-                  `<div class="muted">본문 내용이 없습니다.</div>`,
-              }}
-            />
-          </Row>
+              <Row>
+                <Label>내용</Label>
+                <Viewer
+                  dangerouslySetInnerHTML={{
+                    __html:
+                      (doc?.signcontent ?? "").trim() ||
+                      `<div class="muted">본문 내용이 없습니다.</div>`,
+                  }}
+                />
+              </Row>
 
-          <Row>
-            <Label>첨부파일</Label>
-            {(!doc?.attachments || doc.attachments.length === 0) ? (
-              <EmptyBox>첨부파일이 없습니다.</EmptyBox>
-            ) : (
-              <AttachBox>
-                {doc.attachments.map((f, i) => (
-                  <AttachItem key={i}>
-                    <span className="name" title={f.name}>{f.name}</span>
-                    <span className="meta">{f.size || ""}</span>
-                   {f.url ? (
-  <DlBtn href={f.url} target="_blank" rel="noreferrer">다운로드</DlBtn>
-) : null}
-                  </AttachItem>
-                ))}
-              </AttachBox>
-            )}
-          </Row>
+              <Row>
+                <Label>첨부파일</Label>
+                {(!doc?.attachments || doc.attachments.length === 0) ? (
+                  <EmptyBox>첨부파일이 없습니다.</EmptyBox>
+                ) : (
+                  <AttachBox>
+                    {doc.attachments.map((f, i) => (
+                      <AttachItem key={i}>
+                        <span className="name" title={f.name}>{f.name}</span>
+                        <span className="meta">{f.size || ""}</span>
+                        {f.url ? (
+                          <DlBtn href={f.url} target="_blank" rel="noreferrer">다운로드</DlBtn>
+                        ) : null}
+                      </AttachItem>
+                    ))}
+                  </AttachBox>
+                )}
+              </Row>
 
-          <Row>
-            <Label>결재선</Label>
-            {(!lines || lines.length === 0) ? (
-              <EmptyBox>결재선 정보가 없습니다.</EmptyBox>
-            ) : (
-              <ListBox>
-                {lines.map((ln, i, arr) => {
-                  const last = i === arr.length - 1;
-                  return (
-                    <ListItem key={i} $last={last}>
-                      <div className="left">
-                        <strong>{safe(ln?.orderSeq, "-")}차</strong>&nbsp;{safe(ln?.approverName, "-")}
-                        <span className="meta"> / 부서: {safe(ln?.approverDept, "-")}</span>
-                      </div>
-                      <div className="right meta">
-                        {routeStatusText(ln?.routeStatus)}
-                        {ln?.actionAt ? <span>&nbsp;·&nbsp;{formatDateTime(ln?.actionAt)}</span> : null}
-                      </div>
-                    </ListItem>
-                  );
-                })}
-              </ListBox>
-            )}
-          </Row>
+              <Row>
+                <Label>결재선</Label>
+                {(!lines || lines.length === 0) ? (
+                  <EmptyBox>결재선 정보가 없습니다.</EmptyBox>
+                ) : (
+                  <ListBox>
+                    {lines.map((ln, i, arr) => {
+                      const last = i === arr.length - 1;
+                      return (
+                        <ListItem key={i} $last={last}>
+                          <div className="left">
+                            <strong>{safe(ln?.orderSeq, "-")}차</strong>&nbsp;{safe(ln?.approverName, "-")}
+                            <span className="meta"> / 부서: {safe(ln?.approverDept, "-")}</span>
+                          </div>
+                          <div className="right meta">
+                            {routeStatusText(ln?.routeStatus)}
+                            {ln?.actionAt ? <span>&nbsp;·&nbsp;{formatDateTime(ln?.actionAt)}</span> : null}
+                          </div>
+                        </ListItem>
+                      );
+                    })}
+                  </ListBox>
+                )}
+              </Row>
 
-          <Row>
-            <Label>참조자</Label>
-            {(!refs || refs.length === 0) ? (
-              <EmptyBox>참조자가 없습니다.</EmptyBox>
-            ) : (
-              <ListBox>
-                {refs.map((rf, i, arr) => {
-                  const last = i === arr.length - 1;
-                  return (
-                    <ListItem key={i} $last={last}>
-                      <div className="left">{safe(rf?.approverName, "-")}</div>
-                      <div className="right meta">부서: {safe(rf?.approverDept, "-")}</div>
-                    </ListItem>
-                  );
-                })}
-              </ListBox>
-            )}
-          </Row>
+              <Row>
+                <Label>참조자</Label>
+                {(!refs || refs.length === 0) ? (
+                  <EmptyBox>참조자가 없습니다.</EmptyBox>
+                ) : (
+                  <ListBox>
+                    {refs.map((rf, i, arr) => {
+                      const last = i === arr.length - 1;
+                      return (
+                        <ListItem key={i} $last={last}>
+                          <div className="left">{safe(rf?.approverName, "-")}</div>
+                          <div className="right meta">부서: {safe(rf?.approverDept, "-")}</div>
+                        </ListItem>
+                      );
+                    })}
+                  </ListBox>
+                )}
+              </Row>
+            </>
+          )}
         </ScrollArea>
 
         <Footer>
@@ -175,8 +250,8 @@ export default function ApprovalDetailPage({
               onChange={(e) => setComment(e.target.value)}
               placeholder="결재 의견(선택)"
             />
-            <Btn $variant="ok" onClick={submitApprove}>승인</Btn>
-            <Btn $variant="danger" onClick={submitReject}>반려</Btn>
+            <Btn $variant="ok" onClick={submitApprove} disabled={!doc}>승인</Btn>
+            <Btn $variant="danger" onClick={submitReject} disabled={!doc}>반려</Btn>
           </FooterGrid>
         </Footer>
       </Card>
@@ -184,7 +259,7 @@ export default function ApprovalDetailPage({
   );
 }
 
-/* ===== helpers (생략 없이 그대로) ===== */
+/* ===== helpers (그대로) ===== */
 function statusTextOf(code){switch(Number(code)){case 0:return"작성/대기";case 1:return"진행중";case 2:return"완료";case 3:return"반려";case 4:return"회수/보류";default:return"-";}}
 function statusTypeOf(code){switch(Number(code)){case 1:return"progress";case 2:return"done";case 3:return"reject";case 4:return"hold";case 0:return"draft";default:return"neutral";}}
 function routeStatusText(code){switch(Number(code)){case 1:return"승인";case 2:return"반려";case 3:return"보류";default:return"대기";}}
@@ -239,6 +314,10 @@ const ScrollArea = styled.div`
   overflow: auto;
   padding: 0 ${PADX + 4}px ${PADX + 4}px;
   min-width: 0;
+
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,.25) transparent;
@@ -271,9 +350,8 @@ const BadgeEmIn = styled.span`
   pointer-events: none;
 `;
 
-/* Read-only input (컴팩트, 중앙 정렬) */
 const Read = styled.input.attrs({ type: "text", readOnly: true })`
-  width: 80%;
+  width: 85%;
   height: ${H}px;
   padding: 0 ${PADX}px;
   border: 1px solid #e1e5ef;
@@ -285,11 +363,9 @@ const Read = styled.input.attrs({ type: "text", readOnly: true })`
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-
-  display: block;     /* ← 블록으로 바꾸고 */
-  margin: 0 auto;     /* ← 좌우 가운데 정렬 */
-
-  text-align: center; /* ← 텍스트도 가운데(원치 않으면 이 줄 제거) */
+  display: block;
+  margin: 0 auto;
+  text-align: center;
 `;
 
 const Viewer = styled.div`
@@ -312,8 +388,8 @@ const AttachItem = styled.div`
   grid-template-columns: 1fr auto auto;
   align-items: center;
   column-gap: ${GAP}px;
-  padding: 6px ${PADX}px;       /* ⬅ 컴팩트 패딩 */
-  max-height: ${H}px;           /* ⬅ 행 높이 하한 */
+  padding: 6px ${PADX}px;
+  max-height: ${H}px;
 
   border-bottom: 1px solid #f1f2f4;
   &:last-child { border-bottom: 0; }
@@ -331,24 +407,13 @@ const AttachItem = styled.div`
   }
 `;
 
-/* 🔒 전역 .btn 영향을 완전히 차단 */
 const DlBtn = styled.a`
-  all: unset;                          /* 전역 버튼 스타일 초기화 */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: ${H - 6}px;                  /* 컴팩트 높이 */
-  padding: 0 ${PADX}px;
-  border-radius: 999px;
-  border: 1px solid #d9dbe3;
-  background: #f2f3f7;
-  font-size: ${FONT - 1}px;
-  color: #333;
-  text-decoration: none;
-  cursor: pointer;
-  line-height: 1;                      /* 라인하이트로 인한 늘어남 방지 */
+  all: unset;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: ${H - 6}px; padding: 0 ${PADX}px;
+  border-radius: 999px; border: 1px solid #d9dbe3; background: #f2f3f7;
+  font-size: ${FONT - 1}px; color: #333; text-decoration: none; cursor: pointer; line-height: 1;
   -webkit-tap-highlight-color: transparent;
-
   &:hover { background: #eceff3; }
   &:active { transform: translateY(1px); }
 `;
@@ -397,4 +462,3 @@ const CommentInput = styled.input`
   height: ${H}px; padding: 0 ${PADX}px; border: 1px solid #E1E5EF;
   border-radius: 8px; font-size: ${FONT}px; min-width: 120px;
 `;
-
