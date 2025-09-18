@@ -1,7 +1,9 @@
 // src/components/Approval/ReferenceBoxPage.jsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
+// ✅ 전자결재 API 불러오기 (경로 주의: Approval → ../motiveOn/api)
+import { getApprovalViewerList } from "../motiveOn/api";
 
 /** =========================================================
  *  ReferenceBoxPage (모바일 참조 문서함)
@@ -10,28 +12,94 @@ import styled from "styled-components";
  *  - headerOffset: 상단 고정 헤더 높이(px) (기본 56)
  * ========================================================= */
 export default function ReferenceBoxPage({
-  items = MOCK_ITEMS,
+  items = MOCK_ITEMS,   // ← 서버 실패 시 폴백
   headerOffset = 56,
 }) {
   const [tab, setTab] = useState("ALL");        // ALL | WAIT | ING | HOLD | DONE
   const [field, setField] = useState("title");  // title | form | drafter
   const [keyword, setKeyword] = useState("");
 
+  // ✅ 서버 데이터 상태
+const [serverItems, setServerItems] = useState(null);
+const [loading, setLoading] = useState(true);
+const [errMsg, setErrMsg] = useState("");
+
+// 대문자/스네이크 응답도 UI 표준키로 변환
+function normalizeRow(r = {}) {
+  const get = (...keys) => keys.find((k) => r[k] !== undefined) ?? null;
+  const pick = (...keys) => r[get(...keys)];
+  return {
+    signNo:   pick("signNo", "SIGNNO", "signno"),
+    title:    pick("title", "TITLE"),
+    formNo:   pick("formNo", "FORMNO", "form_no"),
+    formName: pick("formName", "FORMNAME", "form_name"),
+    draftAt:  pick("draftAt", "DRAFTAT", "regDate", "REGDATE"),
+    completeAt: pick("completeAt", "COMPLETEAT"),
+    emergency: Number(pick("emergency", "EMERGENCY")) || 0,
+    docStatus: Number(pick("docStatus", "DOCSTATUS")) || 2,
+    drafterName: pick("drafterName", "DRAFTERNAME", "drafter_name") || "",
+  };
+}
+
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      setLoading(true);
+      setErrMsg("");
+
+      const res = await getApprovalViewerList({
+        period: "all",
+        field: "title",
+        q: "",
+        page: 1,
+        size: 50,
+      });
+
+      // 1) 응답이 JSON인지 검증 (로그인 리다이렉트 등 HTML 차단)
+      const ct = (res?.headers?.["content-type"] || "").toLowerCase();
+      if (!ct.includes("application/json")) {
+        throw new Error("JSON이 아닌 응답을 수신했습니다. (로그인/권한 확인)");
+      }
+
+      // 2) PageResponse 형태(content) 우선, 아니면 list 폴백
+      const rawList =
+        (res?.data?.content && Array.isArray(res.data.content) && res.data.content) ||
+        (Array.isArray(res?.data?.list) ? res.data.list : []);
+
+      // 3) 키 정규화
+      const list = rawList.map(normalizeRow);
+
+      if (alive) setServerItems(list);
+    } catch (e) {
+      console.error("[viewerList.json] load fail:", e);
+      if (alive) setErrMsg("목록을 불러오지 못했습니다.");
+    } finally {
+      if (alive) setLoading(false);
+    }
+  })();
+  return () => { alive = false; };
+}, []);
+
+
+  // 실제로 사용할 아이템 (서버 성공 시 serverItems, 실패/전엔 props.items)
+  const dataItems = serverItems ?? items;
+
   const filtered = useMemo(() => {
     const kw = (keyword || "").trim().toLowerCase();
-    return (items || []).filter((r) => {
+    return (dataItems || []).filter((r) => {
       const code = statusCodeOf(r.docStatus);
       const tabOk = tab === "ALL" || code === tab;
 
       let val = "";
       if (field === "title") val = r.title || "";
       else if (field === "form") val = r.formName || r.formNo || "";
-      else if (field === "drafter") val = r.drafterName || "";
+      else if (field === "drafter") val = r.drafterName || ""; // 서버에서 제공 안 하면 빈문자열
 
-      const kwOk = kw === "" || val.toLowerCase().includes(kw);
+      const kwOk = kw === "" || String(val).toLowerCase().includes(kw);
       return tabOk && kwOk;
     });
-  }, [items, tab, field, keyword]);
+  }, [dataItems, tab, field, keyword]);
 
   return (
     <Wrapper style={{ top: headerOffset }}>
@@ -69,9 +137,13 @@ export default function ReferenceBoxPage({
                   </SearchBar>
                 </HeaderRow>
 
-                {/* ✅ 카드 내부만 세로 스크롤 (스크롤바도 카드 라운드 안쪽) */}
+                {/* ✅ 로딩/에러/목록 렌더링 */}
                 <ScrollArea>
-                  {filtered.length === 0 ? (
+                  {loading ? (
+                    <Loading>불러오는 중…</Loading>
+                  ) : errMsg ? (
+                    <Empty>{errMsg}</Empty>
+                  ) : filtered.length === 0 ? (
                     <Empty>표시할 문서가 없습니다.</Empty>
                   ) : (
                     <MobileList>
@@ -238,9 +310,8 @@ const ScrollArea = styled.div`
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
 
-  /* 스크롤바 스타일 (카드 안쪽에 표시) */
   scrollbar-gutter: stable;
-  scrollbar-width: thin;                 /* Firefox */
+  scrollbar-width: thin;                 
   scrollbar-color: rgba(0,0,0,.25) transparent;
 
   &::-webkit-scrollbar { width: 8px; }
@@ -253,7 +324,6 @@ const ScrollArea = styled.div`
   }
 `;
 
-/* 상단 컨트롤 */
 const HeaderRow = styled.div`
   flex: 0 0 auto;
   display: flex;
@@ -304,12 +374,11 @@ const SearchBtn = styled.button`
   background: #2C3E50; color: #fff; cursor: pointer;
 `;
 
-/* 리스트 */
 const MobileList = styled.ul`
   display: grid;
   gap: 10px;
   margin: 0;
-  padding: 0 0 6px;        /* 마지막 아이템 하단 여유 */
+  padding: 0 0 6px;
   list-style: none;
   overflow-x: hidden;
 `;
@@ -356,6 +425,8 @@ const Empty = styled.div`
   font-size: 13px;
 `;
 
+const Loading = styled(Empty)``;
+
 const Badge = styled.span`
   display: inline-flex; align-items: center; gap: 6px;
   padding: ${({ $size }) => ($size === "sm" ? "3px 8px" : "6px 12px")};
@@ -369,12 +440,8 @@ const Badge = styled.span`
   &.hold { background:rgba(244,180,0,.16); color:#C48A00; }
 `;
 
-/* ===================== demo mock ===================== */
+/* ===================== demo mock (서버 실패 시 폴백) ===================== */
 const MOCK_ITEMS = [
-  { signNo: 301, title: "지출 정산서 제목", formNo: "F-009", formName: "정산서",     drafterName: "최유진", completeAt: "2025-09-07", emergency: 0, docStatus: 3 },
-  { signNo: 302, title: "지출 결의서 제목", formNo: "F-001", formName: "지출결의서", drafterName: "김민수", draftAt: "2025-09-10", emergency: 0, docStatus: 2 },
-  { signNo: 303, title: "휴가 신청서 제목", formNo: "F-105", formName: "휴가신청서", drafterName: "이서준", draftAt: "2025-09-08", emergency: 1, docStatus: 0 },
-  { signNo: 304, title: "출장 보고서 제목", formNo: "F-077", formName: "출장보고서", drafterName: "박지훈", draftAt: "2025-09-09", emergency: 0, docStatus: 6 },
   { signNo: 301, title: "지출 정산서 제목", formNo: "F-009", formName: "정산서",     drafterName: "최유진", completeAt: "2025-09-07", emergency: 0, docStatus: 3 },
   { signNo: 302, title: "지출 결의서 제목", formNo: "F-001", formName: "지출결의서", drafterName: "김민수", draftAt: "2025-09-10", emergency: 0, docStatus: 2 },
   { signNo: 303, title: "휴가 신청서 제목", formNo: "F-105", formName: "휴가신청서", drafterName: "이서준", draftAt: "2025-09-08", emergency: 1, docStatus: 0 },

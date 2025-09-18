@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
 import useOrgStore from "../../store/orgStore";
-import BottomSheetModal from "../Common/BottomSheetModal"; // ✅ Common (대문자)
+import BottomSheetModal from "../common/BottonSheetModal"; // ✅ Common (대문자)
 import dropdownIcon from "../../assets/img/dropdown.png";
 
 export default function OrgPickerBottomSheet({

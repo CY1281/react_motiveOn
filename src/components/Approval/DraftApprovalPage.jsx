@@ -384,10 +384,3 @@ const Badge = styled.span`
   &.hold { background:rgba(244,180,0,.16); color:#C48A00; }
 `;
 
-/* ===================== demo mock ===================== */
-const MOCK_ITEMS = [
-  { signNo: 401, title: "지출 결의서 제목", formNo: "F-001", formName: "지출결의서", drafterName: "김민수", draftAt: "2025-09-10", emergency: 0, docStatus: 2 },
-  { signNo: 402, title: "휴가 신청서 제목", formNo: "F-105", formName: "휴가신청서", drafterName: "이서준", draftAt: "2025-09-08", emergency: 1, docStatus: 0 },
-  { signNo: 403, title: "출장 보고서 제목", formNo: "F-077", formName: "출장보고서", drafterName: "박지훈", draftAt: "2025-09-09", emergency: 0, docStatus: 6 },
-  { signNo: 404, title: "지출 정산서 제목", formNo: "F-009", formName: "정산서", drafterName: "최유진", completeAt: "2025-09-07", emergency: 0, docStatus: 3 },
-];

@@ -313,7 +313,7 @@ const AttachItem = styled.div`
   align-items: center;
   column-gap: ${GAP}px;
   padding: 6px ${PADX}px;       /* ⬅ 컴팩트 패딩 */
-  mex-height: ${H}px;           /* ⬅ 행 높이 하한 */
+  max-height: ${H}px;           /* ⬅ 행 높이 하한 */
 
   border-bottom: 1px solid #f1f2f4;
   &:last-child { border-bottom: 0; }
@@ -398,7 +398,3 @@ const CommentInput = styled.input`
   border-radius: 8px; font-size: ${FONT}px; min-width: 120px;
 `;
 
-/* === demo mock (동일) === */
-const MOCK_DOC={signNo:91001,emergency:1,draftAt:"2025-09-10T10:20:00",completeAt:"",docStatus:1,title:"지출 결의서 – 장비 도입",sformno:"F-001",drafterName:"이민진",signcontent:"<p>지출 내역 및 첨부 문서 참고 바랍니다.</p>",attachments:[{name:"견적서_장비A.pdf",url:"#",size:"321KB"},{name:"사양표.xlsx",url:"#",size:"88KB"}]};
-const MOCK_LINES=[{orderSeq:1,approverName:"김팀장",approverDept:"영업1팀",routeStatus:1,actionAt:"2025-09-10T12:10:00"},{orderSeq:2,approverName:"이이사",approverDept:"영업본부",routeStatus:0,actionAt:""}];
-const MOCK_REFS=[{approverName:"박대리",approverDept:"경영지원"},{approverName:"최사원",approverDept:"재무팀"}];

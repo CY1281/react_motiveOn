@@ -414,12 +414,3 @@ const Badge = styled.span`
   &.rej  { background:#fde8e8; color:#b01818; }
 `;
 
-/* ===================== demo mock ===================== */
-const MOCK_ITEMS = [
-  // myState: 0=대기, 1=진행중(내가 처리 중), 2=반려
-  { signNo: 501, title: "지출 결의서 제목", formNo: "F-001", formName: "지출결의서", ddate: "2025-09-10", docName: "김민수", docDept: "재무팀", emergency: 0, docStatus: 2, myState: 1, isMine: true },
-  { signNo: 502, title: "휴가 신청서 제목", formNo: "F-105", formName: "휴가신청서", ddate: "2025-09-08", docName: "이서준", docDept: "인사팀",  emergency: 1, docStatus: 0, myState: 0, isMine: true },
-  { signNo: 503, title: "출장 보고서 제목", formNo: "F-077", formName: "출장보고서", ddate: "2025-09-09", docName: "박지훈", docDept: "영업1팀", emergency: 0, docStatus: 6, myState: 0 },
-  { signNo: 504, title: "정산서 제목",     formNo: "F-009", formName: "정산서",     ddate: "2025-09-07", docName: "최유진", docDept: "경영지원", emergency: 0, docStatus: 3, myState: 0 },
-  { signNo: 505, title: "업무 협조 요청",   formNo: "F-020", formName: "협조전",     ddate: "2025-09-11", docName: "정하늘", docDept: "품질팀",   emergency: 0, docStatus: 2, myState: 2 },
-];
