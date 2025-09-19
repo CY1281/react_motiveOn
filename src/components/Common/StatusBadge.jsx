@@ -15,8 +15,8 @@ const StatusBadge = ({ label }) => {
     <span
       style={{
         display: "inline-block",
-        padding: "6px 14px",   
-        borderRadius: "6px",  
+        padding: "6px 14px",   // 조금 더 네모 느낌
+        borderRadius: "6px",  // 살짝 둥글게
         fontSize: "13px",
         fontWeight: "bold",
         backgroundColor: bgColor,

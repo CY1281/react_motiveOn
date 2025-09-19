@@ -3,13 +3,15 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import FormPickerPage from "./FormPickerPage";
-import BottomSheetModal from "../Common/BottomSheetModal"; // ← 경로/대소문자 확인
+import BottomSheetModal from "../common/BottomSheetModal"; // ← 경로/대소문자 확인
 import { getApprovalDraftList } from "../motiveOn/api";
 
 export default function DraftApprovalPage({ headerOffset = 56, onNewDraft }) {
   const navigate = useNavigate();
 
   // ✅ 바텀시트(폼 피커) - 단일 상태만 사용
+
+  
   const [showFormPicker, setShowFormPicker] = useState(false);
 
   const [tab, setTab] = useState("ALL");        // ALL | WAIT | ING | HOLD | DONE
@@ -205,6 +207,8 @@ export default function DraftApprovalPage({ headerOffset = 56, onNewDraft }) {
 }
 
 /* ===================== Item Card & helpers ===================== */
+
+
 function DocCard({ row }) {
   const navigate = useNavigate();
   return (

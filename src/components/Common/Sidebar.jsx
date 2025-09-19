@@ -73,11 +73,11 @@ const Sidebar = ({ isOpen, onClose, user, onNavigate, onLogout }) => {
               marginRight: "14px",
             }}
           />
-          <div style={{ fontSize: "13px", lineHeight: "1.5", color: "#333" }}>
+          <div style={{ fontSize: "13px", lineHeight: "1.8", color: "#333" }}>
             <p>성명 : {user?.name}</p>
-            <p>사번 : {user?.empNo}</p>
-            <p>직위 : {user?.position}</p>
-            <p>부서 : {user?.dept}</p>
+            <p>사번 : {user?.eno}</p>
+            <p>직위 : {user?.Job}</p>
+            <p>부서 : {user?.name}</p>
             <p>출근시간 : {user?.checkIn}</p>
           </div>
         </div>

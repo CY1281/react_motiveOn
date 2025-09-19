@@ -1,9 +1,48 @@
 import axios from "axios";
 
+export function getnoticemain() {
+  return axios.get('/api/notice/main');
+}
+export function getCalendarList() {
+  const loginUser = JSON.parse(sessionStorage.getItem("user-storage"));
+  const eno = loginUser?.state?.user?.eno;
+
+  return axios.get(`/api/calendar/list?Eno=${eno}`);
+}
+
+//  일정 등록
+export function registCalendar(calendar) {
+  const loginUser = JSON.parse(sessionStorage.getItem("user-storage"));
+  const eno = loginUser?.state?.user?.eno;
+  return axios.post(`/api/calendar/regist?Eno=${eno}`, calendar);
+}
+
+// 일정 수정
+export function modifyCalendar(calendar) {
+  const loginUser = JSON.parse(sessionStorage.getItem("user-storage"));
+  const eno = loginUser?.state?.user?.eno;
+
+  return axios.post(`/api/calendar/modify?Eno=${eno}`, calendar);
+}
+
+
+// 일정 삭제
+
+export function deleteCalendar(ccode) {
+  const loginUser = JSON.parse(sessionStorage.getItem("user-storage"));
+  const eno = loginUser?.state?.user?.eno;
+
+  return axios.post("/api/calendar/delete", { ccode, eno });
+}
+
+
+// ---------------------------------------------------------------------------//
+// 로그인 사용자 eno 가져오기
 function getEno() {
   const loginUser = JSON.parse(sessionStorage.getItem("user-storage"));
-  return loginUser?.state?.user; // 이미 eno 값이 숫자로 들어있음
+  return loginUser?.state?.user?.eno;   // ✅ eno만 반환
 }
+
 // 요청한 업무 리스트
 export function getRequestedWork() {
   const eno = getEno();
@@ -25,17 +64,35 @@ export function getDepWorkList(dno) {
 export function getWorkDetail(wcode) {
   return axios.get(`/api/work/detail?wcode=${wcode}`);
 }
-
 // 업무 등록
-export function registWork(workData, ownerEno) {
-  const eno = getEno();
-  const query = ownerEno ? `&ownerEno=${ownerEno}` : "";
-  return axios.post(`/api/work/regist?requesterEno=${eno}${query}`, workData);
+export function registWork(workData, ownerEnos = []) {
+  const eno = getEno(); // 로그인 사용자 eno
+  return axios.post(`/api/work/regist`, workData, {
+    params: {
+      requesterEno: eno,
+      ownerEno: ownerEnos, // 👉 배열 그대로 넘기기
+    },
+  });
 }
+
+
+// ✅ 업무 수정 (Calendar modify와 동일 스타일)
+export function modifyWork(workData) {
+  const eno = getEno();
+  return axios.post(`/api/work/modify?Eno=${eno}`, workData);
+}
+
+
+// 업무 삭제 API
+export const deleteWork = (wcode) => {
+  return axios.post(`/api/work/delete?wcode=${wcode}`);
+};
+
 
 // 업무 상태 변경
 export function updateWorkStatus(wcode, status) {
-  return axios.post(`/api/work/updateStatus?wcode=${wcode}&status=${status}`);
+  const eno = getEno();
+  return axios.post(`/api/work/updateStatus?wcode=${wcode}&status=${status}&eno=${eno}`);
 }
 
 // 승인
@@ -52,12 +109,8 @@ export function rejectWork(wcode, reason) {
 
 // 이의 제기
 export function objectionWork(wcode, reason) {
-  return axios.post(`/api/work/objection?wcode=${wcode}&reason=${reason}`);
-}
-
-// 삭제
-export function deleteWork(wcode) {
-  return axios.post(`/api/work/delete?wcode=${wcode}`);
+  const eno = getEno();
+  return axios.post(`/api/work/objection?wcode=${wcode}&reason=${reason}&eno=${eno}`);
 }
 
 // 협업 요청
@@ -73,6 +126,25 @@ export function requestDelegate(wcode, delegateEno) {
   const eno = getEno();
   return axios.post(`/api/work/requestDelegate?wcode=${wcode}&eno=${delegateEno}&requesterEno=${eno}`);
 }
+
+
+
+
+
+
+// ================== 조직도 ================== //
+
+export function getOrgTree() {
+  return axios.get("/api/org/tree");   // 👉 프록시 + 컨트롤러 매핑 일치
+}
+
+export function getOrgChildren(parent = "#") {
+  return axios.get("/api/org/children", { params: { parent } });
+}
+
+
+// ---------------------------------------------------------------------------------------------//
+
 
 /* ======== 전자결재(Approval) API 추가 ======== */
 
@@ -205,4 +277,3 @@ export function getForms({ q = "", classNo, page = 1, size = 50 } = {}) {
 export function getFormByNo(sformno) {
   return client.get(`/api/approval/form.json?${toQuery({ sformno })}`);
 }
-

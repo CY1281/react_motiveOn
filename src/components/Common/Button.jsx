@@ -31,6 +31,7 @@ export const Button = ({ label, variant = "primary", onClick, disabled }) => {
         width: "100%",
         marginTop: "8px",
         opacity: disabled ? 0.6 : 1,
+        
       }}
     >
       {label}

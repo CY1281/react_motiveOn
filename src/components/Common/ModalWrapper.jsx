@@ -34,7 +34,7 @@ const ModalWrapper = () => {
         onClick={(e) => e.stopPropagation()} // 내부 클릭 시 닫히지 않게
       >
         {content}
-        {/* <button
+        <button
           onClick={closeModal}
           style={{
             marginTop: "12px",
@@ -48,7 +48,7 @@ const ModalWrapper = () => {
           }}
         >
           닫기
-        </button> */}
+        </button>
       </div>
     </div>
   );

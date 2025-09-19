@@ -2,8 +2,36 @@
 import React, { useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
 import useOrgStore from "../../store/orgStore";
-import BottomSheetModal from "../common/BottonSheetModal"; // ✅ Common (대문자)
+import BottomSheetModal from "../Common/BottomSheetModal"; // 프로젝트 경로 그대로 사용
 import dropdownIcon from "../../assets/img/dropdown.png";
+
+/* ========= helpers ========= */
+const toEno = (x) => {
+  const raw =
+    x?.eno ?? x?.ENO ?? x?.value ?? x?.empNo ?? x?.EMPNO ?? x?.EMP_NO ?? x?.id ?? x?.userId ?? x?.no;
+  if (raw == null) return null;
+  const n = Number(String(raw).replace(/[^\d]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+const normalizePerson = (p) => {
+  const eno = toEno(p);
+  if (eno == null) return null;
+  const name =
+    p?.name ?? p?.label ?? p?.empName ?? p?.EMP_NAME ?? p?.EMPNAME ?? "";
+  const position =
+    p?.position ?? p?.pos ?? p?.rank ?? p?.POSITION ?? "";
+  const deptName =
+    p?.deptName ?? p?.dept ?? p?.DEPTNAME ?? p?.DEPT_NAME ?? "";
+  return {
+    eno,
+    name,
+    position,
+    deptName,
+    value: eno,
+    label: name || String(eno),
+  };
+};
 
 export default function OrgPickerBottomSheet({
   isOpen,
@@ -13,61 +41,92 @@ export default function OrgPickerBottomSheet({
   onApply,
   title = "조직도 선택",
 }) {
-  const { orgData = [] } = useOrgStore();
+  const { orgData = [], fetchOrgData } = useOrgStore();
+
   const [search, setSearch] = useState("");
-  const [openDepts, setOpenDepts] = useState({}); // 기본 접힘
+  const [openDepts, setOpenDepts] = useState({});
   const [selectedMap, setSelectedMap] = useState(new Map());
 
-  // 초기 선택 동기화
+  /* ---- 조직도 데이터 로딩 (필요 시 1회) ---- */
+  useEffect(() => {
+    if (!isOpen) return;
+    if (typeof fetchOrgData === "function" && (!Array.isArray(orgData) || orgData.length === 0)) {
+      fetchOrgData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  /* ---- 초기 선택 동기화 ---- */
   useEffect(() => {
     if (!isOpen) return;
     const map = new Map();
-    (initial || []).forEach((p) => map.set(p.eno, p));
+    (initial || []).forEach((p) => {
+      const n = normalizePerson(p);
+      if (n) map.set(n.eno, n);
+    });
     setSelectedMap(map);
+    setSearch("");
+    setOpenDepts({});
   }, [isOpen, initial]);
 
-  // 검색 필터링
+  /* ---- 검색 필터링 (대소문자 무시) ---- */
   const filtered = useMemo(() => {
-    const s = (search || "").trim();
-    return orgData
+    const kw = (search || "").trim().toLowerCase();
+    if (!Array.isArray(orgData)) return [];
+    return (orgData || [])
       .map((dept) => {
-        const matched = (dept.employees || []).filter(
-          (emp) =>
-            emp.name.includes(s) ||
-            (emp.position || "").includes(s) ||
-            dept.deptName.includes(s)
-        );
-        return { ...dept, employees: matched };
+        const dName = String(dept?.deptName || "");
+        const dNameL = dName.toLowerCase();
+        const matched = (dept?.employees || []).filter((emp) => {
+          const nm = String(emp?.name || "").toLowerCase();
+          const pos = String(emp?.position || "").toLowerCase();
+          return !kw || nm.includes(kw) || pos.includes(kw) || dNameL.includes(kw);
+        });
+        return { deptName: dName, employees: matched };
       })
-      .filter((d) => d.employees.length > 0 || d.deptName.includes(s));
+      .filter(
+        (d) =>
+          (d.employees || []).length > 0 ||
+          String(d.deptName || "").toLowerCase().includes(kw)
+      );
   }, [orgData, search]);
 
   const toggleDept = (deptName) =>
     setOpenDepts((prev) => ({ ...prev, [deptName]: !prev[deptName] }));
 
-  const isChecked = (emp) => selectedMap.has(emp.eno);
+  const isChecked = (eno) => selectedMap.has(eno);
 
-  const toggleSelect = (emp) =>
+  const toggleSelect = (emp, deptName) => {
+    const eno = toEno(emp);
+    if (eno == null) return;
+    const person = normalizePerson({ ...emp, deptName });
     setSelectedMap((prev) => {
       const next = new Map(prev);
       if (multiple) {
-        next.has(emp.eno) ? next.delete(emp.eno) : next.set(emp.eno, emp);
+        if (next.has(eno)) next.delete(eno);
+        else next.set(eno, person);
       } else {
-        next.clear();
-        next.set(emp.eno, emp);
+        // 단일 선택: 동일 클릭 시 토글 해제
+        if (next.has(eno)) next.clear();
+        else {
+          next.clear();
+          next.set(eno, person);
+        }
       }
       return next;
     });
+  };
 
   const handleApply = () => {
-    onApply(Array.from(selectedMap.values()));
+    const list = Array.from(selectedMap.values());
+    onApply?.(list);
     onClose?.();
   };
 
-  // === BottomSheetModal 수정 없이 message로 전체 UI 전달 ===
+  /* ---- 렌더 ---- */
   const body = (
     <Wrap>
-      {/* 선택 요약 (심플) */}
+      {/* 선택 요약 */}
       <SelectBar>
         {selectedMap.size === 0 ? (
           <Hint>선택된 인원이 없습니다.</Hint>
@@ -95,7 +154,7 @@ export default function OrgPickerBottomSheet({
         )}
       </SelectBar>
 
-      {/* 검색 (sticky) */}
+      {/* 검색 */}
       <Sticky>
         <Search
           value={search}
@@ -107,14 +166,24 @@ export default function OrgPickerBottomSheet({
       {/* 리스트 */}
       <List>
         {filtered.length === 0 ? (
-          <Empty>표시할 조직이 없습니다.</Empty>
+          <Empty>
+            {Array.isArray(orgData) && orgData.length === 0 && !search
+              ? "조직도를 불러오는 중…"
+              : "표시할 조직이 없습니다."}
+          </Empty>
         ) : (
           filtered.map((dept) => {
-            // ✅ 기본 접힘: openDepts[dept]가 undefined면 false로 처리
             const opened = search ? true : openDepts[dept.deptName] ?? false;
             return (
               <section key={dept.deptName} className="dept-block">
-                <DeptRow onClick={() => toggleDept(dept.deptName)}>
+                <DeptRow
+                  onClick={() => toggleDept(dept.deptName)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") toggleDept(dept.deptName);
+                  }}
+                >
                   <strong className="name" title={dept.deptName}>
                     {dept.deptName}
                   </strong>
@@ -129,19 +198,22 @@ export default function OrgPickerBottomSheet({
                 {opened && (
                   <ul className="emps">
                     {(dept.employees || []).map((emp, idx, arr) => {
-                      const checked = isChecked(emp);
+                      const eno = toEno(emp);
+                      if (eno == null) return null;
+                      const checked = isChecked(eno);
                       const isLast = idx === arr.length - 1;
+
                       return (
-                        <li key={emp.eno}>
+                        <li key={eno}>
                           <EmpRow
                             $last={isLast}
                             role="button"
                             tabIndex={0}
-                            onClick={() => toggleSelect(emp)}
+                            onClick={() => toggleSelect(emp, dept.deptName)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
                                 e.preventDefault();
-                                toggleSelect(emp);
+                                toggleSelect(emp, dept.deptName);
                               }
                             }}
                           >
@@ -152,10 +224,12 @@ export default function OrgPickerBottomSheet({
                                 checked={checked}
                               />
                             </div>
-                            {/* ✅ 이름 중앙정렬 */}
+
+                            {/* 이름 중앙정렬 */}
                             <div className="col-name" title={emp.name}>
                               {emp.name}
                             </div>
+
                             <div className="col-pos">
                               {emp.position && <Pill>{emp.position}</Pill>}
                             </div>
@@ -175,24 +249,22 @@ export default function OrgPickerBottomSheet({
 
   return (
     <BottomSheetModal
-      isOpen={isOpen}
-      title={title}
-      message={body}
-      onCancel={onClose}
-      onConfirm={handleApply}
-    />
+  isOpen={isOpen}
+  title={title}
+  onCancel={onClose}
+  onConfirm={handleApply}
+>
+  {body}                  {/* ✅ children으로 넘기기: <p> 래핑 안 함 */}
+</BottomSheetModal>
   );
 }
 
 /* ================= styles ================= */
-
-/* 컨테이너 */
 const Wrap = styled.div`
   width: 100%;
   font-size: 13px;
 `;
 
-/* 선택 요약(컴팩트) */
 const SelectBar = styled.div`
   min-height: 30px;
   display: flex;
@@ -221,7 +293,6 @@ const Chip = styled.span`
   }
 `;
 
-/* 검색 sticky */
 const Sticky = styled.div`
   position: sticky;
   top: 0;
@@ -238,13 +309,12 @@ const Search = styled.input`
   border-radius: 6px;
 `;
 
-/* 리스트: 얇은 실선으로만 구분 + 부서 간간격 */
 const List = styled.div`
   max-height: min(60vh, 520px);
   overflow-y: auto;
 
   .dept-block + .dept-block {
-    margin-top: 8px; /* ✅ 부서 블록 간 살짝 간격 */
+    margin-top: 8px;
     border-top: 1px solid #eaecef;
   }
 
@@ -255,7 +325,6 @@ const List = styled.div`
   }
 `;
 
-/* 부서 행(실선, 배경 없음) */
 const DeptRow = styled.div`
   display: grid;
   grid-template-columns: 1fr auto 16px;
@@ -271,9 +340,7 @@ const DeptRow = styled.div`
     font-size: 13px;
     font-weight: 800;
     color: #222;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   }
   .count { font-size: 11px; color: #98a0b3; }
   .chev {
@@ -285,7 +352,6 @@ const DeptRow = styled.div`
   .chev.open { transform: rotate(180deg); }
 `;
 
-/* 사원 행: 컨트롤 / 이름(중앙정렬) / 직급(우측) */
 const EmpRow = styled.div`
   display: grid;
   grid-template-columns: 18px 1fr auto;
@@ -295,31 +361,22 @@ const EmpRow = styled.div`
   padding: 4px 2px;
   border-bottom: 1px solid #f1f2f4;
 
-  /* ✅ 마지막 직원 밑에 여백을 주어 다음 부서와 간격 확보 */
   ${({ $last }) => $last && `
     border-bottom: none;
-    padding-bottom: 10px;   /* 이름과 다음 부서 사이 간격 */
+    padding-bottom: 10px;
   `}
 
   &:hover { background: #fafbfd; }
 
   .col-ctrl {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex; align-items: center; justify-content: center;
   }
   .col-name {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    font-weight: 600;
-    color: #333;
-    text-align: center;     /* ✅ 이름 중앙정렬 */
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font-weight: 600; color: #333; text-align: center;
   }
   .col-pos {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+    display: flex; align-items: center; justify-content: flex-end;
   }
   input { width: 14px; height: 14px; }
 `;
@@ -332,7 +389,6 @@ const Pill = styled.span`
   border-radius: 999px;
 `;
 
-/* 빈 상태 */
 const Empty = styled.span`
   display: block;
   padding: 16px 8px;

@@ -1,45 +1,80 @@
+// src/components/Work/WorkRegist.jsx
 import React, { useState } from "react";
 import Header from "../common/Header";
 import InputField from "../common/InputField";
-import SelectBox from "../common/SelectBox";
 import Button from "../common/Button";
 import DatePicker from "../common/DatePicker";
-import OrgTree from "../common/OrgTree";
+import OrgTree from "../common/OrgTree2"; // ✅ 조직도
 import { useNavigate, useLocation } from "react-router-dom";
+import { registWork } from "../motiveOn/api";
+import { useUserStore } from "../../store/userStore";   
 
-export default function RequestedWorkPage() {
+export default function WorkRegist() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const { user, isLoggedIn } = useUserStore(); 
+
   const [showOrgTree, setShowOrgTree] = useState(false);
   const [title, setTitle] = useState("");
-  const [requester, setRequester] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [content, setContent] = useState("");
   const [assignees, setAssignees] = useState([]);
+  const [alertMessage, setAlertMessage] = useState("");
 
-  const handleSelectAssignee = (user) => {
-    setAssignees(prev => {
-      if (prev.some(a => a.value === user.value)) {
-        return prev.filter(a => a.value !== user.value);
-      } else {
-        return [...prev, user];
+  // ✅ 담당자 선택
+  const handleSelectAssignee = (selectedUser) => {
+    if (!selectedUser?.value) return; // 방어 코드
+
+    setAssignees((prev) => {
+      if (prev.some((a) => a.value === selectedUser.value)) {
+        return prev.filter((a) => a.value !== selectedUser.value);
       }
+      return [...prev, selectedUser];
     });
   };
 
-  const requesterOptions = [
-    { value: "kim", label: "김민준" },
-    { value: "lee", label: "이서준" },
-  ];
-
+  // ✅ 저장 버튼
   const handleSave = () => {
-    const data = { title, requester, assignees, startDate, endDate, content };
-    console.log("저장 데이터:", data);
+    if (!user?.eno) {
+      alert("로그인 정보가 없습니다. 다시 로그인 해주세요.");
+      return;
+    }
+
+    if (!title) {
+      alert("제목을 입력해주세요.");
+      return;
+    }
+
+    if (!assignees || assignees.length === 0) {
+      alert("담당자를 최소 1명 선택해주세요.");
+      return;
+    }
+
+    const ownerEnos = assignees.map((a) => a.value);
+
+    registWork(
+      {
+        wtitle: title,
+        wcontent: content,
+        wdate: startDate || null,
+        wend: endDate || null,
+      },
+      ownerEnos
+    )
+      .then(() => {
+        alert("업무등록이 완료 되었습니다.");
+        // ✅ 요청한업무 리스트 페이지로 이동
+        navigate("/work/reqlist");
+      })
+      .catch((err) => {
+        console.error(err);
+        alert("등록에 실패했습니다.");
+      });
   };
 
-
+  // === 스타일 ===
   const pageWrapperStyle = {
     width: "100%",
     display: "flex",
@@ -48,7 +83,6 @@ export default function RequestedWorkPage() {
     fontFamily: "Noto Sans CJK KR, sans-serif",
     backgroundColor: "#f0f2f5",
   };
-
   const contentContainerStyle = {
     flex: 1,
     maxWidth: "390px",
@@ -58,13 +92,11 @@ export default function RequestedWorkPage() {
     boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
     boxSizing: "border-box",
   };
-
   const fieldRowStyle = {
     display: "flex",
     alignItems: "center",
     marginBottom: "16px",
   };
-
   const labelStyle = {
     width: "80px",
     fontWeight: "bold",
@@ -73,11 +105,7 @@ export default function RequestedWorkPage() {
     flexShrink: 0,
     marginRight: "8px",
   };
-
-  const inputWrapperStyle = {
-    flex: 1,
-  };
-
+  const inputWrapperStyle = { flex: 1 };
   const commonInputStyle = {
     height: "40px",
     padding: "0 12px",
@@ -88,22 +116,17 @@ export default function RequestedWorkPage() {
     lineHeight: "40px",
     width: "100%",
     outline: "none",
+    display: "inline-block",
   };
-
   const assigneeInputStyle = {
     ...commonInputStyle,
     backgroundColor: "#f5f5f5",
     cursor: "pointer",
   };
-
-  const buttonContainerStyle = {
-    padding: "8px",
-    backgroundColor: "white",
-  };
+  const buttonContainerStyle = { padding: "8px", backgroundColor: "white" };
 
   return (
     <div style={pageWrapperStyle}>
-
       <div style={contentContainerStyle}>
         {/* 제목 */}
         <div style={fieldRowStyle}>
@@ -123,13 +146,9 @@ export default function RequestedWorkPage() {
         <div style={fieldRowStyle}>
           <div style={labelStyle}>요청자</div>
           <div style={inputWrapperStyle}>
-            <SelectBox
-              options={requesterOptions}
-              value={requester}
-              onChange={(e) => setRequester(e.target.value)}
-              placeholder="요청자를 선택하세요."
-              style={commonInputStyle}
-            />
+            <span style={commonInputStyle}>
+              {user ? `${user.name}` : ""}
+            </span>
           </div>
         </div>
 
@@ -138,7 +157,7 @@ export default function RequestedWorkPage() {
           <div style={labelStyle}>담당자</div>
           <input
             type="text"
-            value={assignees.map(a => a.label).join(", ")}
+            value={assignees.map((a) => a.label).join(", ")}
             placeholder="담당자를 선택하세요."
             readOnly
             onClick={() => setShowOrgTree(true)}
@@ -171,7 +190,13 @@ export default function RequestedWorkPage() {
         </div>
 
         {/* 내용 */}
-        <div style={{ ...fieldRowStyle, alignItems: "flex-start", marginBottom: 0 }}>
+        <div
+          style={{
+            ...fieldRowStyle,
+            alignItems: "flex-start",
+            marginBottom: 0,
+          }}
+        >
           <div style={labelStyle}>내용</div>
           <textarea
             value={content}
@@ -193,10 +218,30 @@ export default function RequestedWorkPage() {
         </div>
       </div>
 
+      {/* 저장 버튼 */}
       <div style={buttonContainerStyle}>
-        <hr style={{ border: "none", borderTop: "1px solid #eee", margin: "10px 0" }} />
+        <hr
+          style={{ border: "none", borderTop: "1px solid #eee", margin: "10px 0" }}
+        />
         <Button label="저장" onClick={handleSave} variant="primary" />
       </div>
+
+      {/* 알림 메시지 */}
+      {alertMessage && (
+        <div
+          style={{
+            position: "fixed",
+            top: "20px",
+            right: "20px",
+            background: "#4caf50",
+            color: "#fff",
+            padding: "12px",
+            borderRadius: "6px",
+          }}
+        >
+          {alertMessage}
+        </div>
+      )}
 
       {/* OrgTree 모달 */}
       {showOrgTree && (
@@ -229,7 +274,7 @@ export default function RequestedWorkPage() {
               onSelect={handleSelectAssignee}
               selectedAssignees={assignees}
             />
-            <Button label="닫기" onClick={() => setShowOrgTree(false)} />
+            <Button label="확인" onClick={() => setShowOrgTree(false)} />
           </div>
         </div>
       )}

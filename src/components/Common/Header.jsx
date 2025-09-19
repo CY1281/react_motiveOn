@@ -1,14 +1,17 @@
 import React from "react";
+import { useNavigate } from "react-router-dom"; 
 import logo from "../../assets/img/motiveon-logo.png";
 
 const Header = ({ onMenuClick }) => {
+  const navigate = useNavigate(); 
+
   return (
     <header
       style={{
         height: "56px",
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between", // 좌측 기준
+        justifyContent: "space-between", 
         padding: "0 16px",
         borderBottom: "1px solid #eee",
         position: "fixed",
@@ -38,7 +41,9 @@ const Header = ({ onMenuClick }) => {
           position: "absolute",
           left: "50%",
           transform: "translateX(-50%)",
+         
         }}
+        onClick={() => navigate("/home")} 
       >
         <img src={logo} alt="MotiveOn" style={{ height: "90px" }} />
       </div>

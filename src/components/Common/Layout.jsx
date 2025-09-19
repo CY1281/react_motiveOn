@@ -1,13 +1,22 @@
 import React, { useState } from "react";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet, useNavigate, Navigate } from "react-router-dom";
+import { useUserStore } from "../../store/userStore";   // ✅ store import
 
 const Layout = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
 
-  const userMock = {
+  // ✅ 로그인 상태 가져오기
+  const { isLoggedIn, logout, user } = useUserStore();
+
+  // ✅ 로그인 안 한 경우 → 로그인 페이지로 리다이렉트
+  if (!isLoggedIn) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const userInfo = user || {
     name: "이민진",
     empNo: "24330015",
     position: "사원",
@@ -15,45 +24,39 @@ const Layout = () => {
     checkIn: "2025-09-04 01:49",
     profileImg: "/profile.png",
   };
-  // ✅ 로그아웃 기능
-  const handleLogout = () => {
-    // 토큰 삭제 (JWT 같은 거 쓰는 경우)
-    localStorage.removeItem("token");
 
-    // 로그인 페이지로 이동
+  const handleLogout = () => {
+    logout();
+    localStorage.removeItem("token");
     navigate("/login");
   };
 
   return (
     <div style={{ width: "100%", height: "788px" }}>
-      {/* 헤더 */}
       <Header
         isSidebarOpen={isSidebarOpen}
         onMenuClick={() => setSidebarOpen(!isSidebarOpen)}
       />
 
-      {/* 사이드바: fixed로 겹쳐서 뜸 */}
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        user={userMock}
+        user={userInfo}
         onNavigate={navigate}
-        onLogout={handleLogout}   // ✅ 여기서 로그아웃 함수 전달
+        onLogout={handleLogout}
       />
 
-      {/* 본문 */}
-    <main
-  style={{
-    marginTop: "56px",                // 헤더 높이만큼 띄움
-    width: "100%",                    // 전체 폭 유지
-    height: "calc(100vh - 56px)",     // 헤더 제외 영역
-    overflow: "hidden",               // ✅ 스크롤 제거
-    boxSizing: "border-box",
-  }}
->
-  <Outlet />
-</main>
-
+      <main
+        style={{
+          marginTop: "56px",
+          width: "100%",
+          height: "calc(100vh - 56px)",
+          overflow: "hidden",
+          boxSizing: "border-box",
+        }}
+      >
+        <Outlet />
+      </main>
     </div>
   );
 };

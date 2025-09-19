@@ -9,7 +9,7 @@ const InputField = ({
   required = false 
 }) => {
   return (
-    <div style={{ marginBottom: "16px", width: "100%" }}>
+    <div style={{ marginBottom: "16px" , width: "100%"}}>
       {label && (
         <label 
           style={{

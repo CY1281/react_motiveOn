@@ -3,12 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 
 /**
  * 서버에서 결재 양식 목록을 불러와 선택하는 컴포넌트
- * - 기본 endpoint: /api/approval/forms.json
+ * - 기본 endpoint: /api/approval/forms.list.json  (컨트롤러2에 맞춤)
  * - onPick(sformno) 호출로 선택 결과 전달
  */
 export default function FormPickerPage({
   onPick,
-  endpoint = "/api/approval/forms.json", // 필요하면 부모에서 오버라이드
+  endpoint = "/api/approval/forms.list.json", // ✅ 컨트롤러2 스펙에 맞춤
   q: initialQ = "",
 }) {
   const [forms, setForms] = useState([]);
@@ -25,45 +25,45 @@ export default function FormPickerPage({
         setLoading(true);
         setErr("");
 
-        // q 파라미터 지원(백엔드에서 무시해도 OK)
         const url = new URL(endpoint, window.location.origin);
         if (q) url.searchParams.set("q", q);
 
         const res = await fetch(url.toString(), {
           headers: { Accept: "application/json" },
+          credentials: "include", // ✅ 세션 유지
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
 
-        // 다양한 응답 포맷(content/list/array) 수용
-        const raw = Array.isArray(data)
-          ? data
+        // 다양한 응답 포맷(content/list/forms/array) 수용
+        const raw = Array.isArray(data?.forms)
+          ? data.forms
           : Array.isArray(data?.content)
           ? data.content
           : Array.isArray(data?.list)
           ? data.list
+          : Array.isArray(data)
+          ? data
           : [];
 
-        // 키 표준화 (formName에 CLASSNAME 계열까지 흡수, 없으면 sformno로 폴백)
+        // 키 표준화
         const norm = raw
           .map((f) => {
-            const sformno = f.sformno || f.SFORMNO || f.formNo || f.FORMNO;
+            const sformno =
+              f.sformno ?? f.sformNo ?? f.SFORMNO ?? f.formNo ?? f.FORMNO;
             const formName =
-              f.formName ||
-              f.FORMNAME ||
-              f.formname ||
-              f.FORM_NAME ||
-              f.CLASSNAME ||
-              f.CLASS_NAME ||
-              // JSON 키에 점(.)은 잘 안 오지만 혹시 모를 대비
-              f["CLS.CLASSNAME"] ||
-              f["cls.CLASSNAME"] ||
+              f.formName ??
+              f.FORMNAME ??
+              f.formname ??
+              f.FORM_NAME ??
+              f.className ??
+              f.CLASSNAME ??
               sformno;
-            return { sformno, formName };
+            return sformno ? { sformno, formName } : null;
           })
-          .filter((x) => x.sformno);
+          .filter(Boolean);
 
-        if (alive) setForms(norm); // ✅ BUGFIX: setForms(rows) → setForms(norm)
+        if (alive) setForms(norm);
       } catch (e) {
         console.error("[FormPickerPage] load fail:", e);
         if (alive) setErr("양식 목록을 불러오지 못했습니다.");
@@ -88,12 +88,12 @@ export default function FormPickerPage({
 
   const handlePick = (sformno) => {
     setSelected(sformno);
-    onPick?.(sformno); // ✅ 부모로 즉시 전달 (모달이면 닫히도록)
+    onPick?.(sformno); // 부모로 즉시 전달(모달이면 닫히도록)
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 280 }}>
-      {/* 검색바 (백엔드 q 파라미터도 지원, 프론트 필터도 병행) */}
+      {/* 검색바 */}
       <div style={{ display: "flex", gap: 8 }}>
         <input
           value={q}

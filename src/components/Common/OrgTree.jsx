@@ -1,11 +1,22 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import useOrgStore from "../../store/orgStore";
 import dropdownIcon from "../../assets/img/dropdown.png";
 
 const OrgTree = ({ onSelect, selectedAssignees }) => {
-  const { orgData } = useOrgStore();
+  const { orgData, fetchOrgData } = useOrgStore();
   const [search, setSearch] = useState("");
   const [openDepts, setOpenDepts] = useState({});
+
+  // ✅ 데이터 불러오기 + 확인
+  useEffect(() => {
+    if (fetchOrgData) {
+      fetchOrgData();
+    }
+  }, [fetchOrgData]);
+
+  useEffect(() => {
+    console.log("조직도 데이터:", orgData);
+  }, [orgData]);
 
   const toggleDept = (deptName) => {
     setOpenDepts((prev) => ({
@@ -16,17 +27,20 @@ const OrgTree = ({ onSelect, selectedAssignees }) => {
 
   const filteredData = orgData
     .map((dept) => {
-      const matchedEmployees = dept.employees.filter(
+      const matchedEmployees = dept.employees?.filter(
         (emp) =>
           emp.name.includes(search) ||
           emp.position.includes(search) ||
           dept.deptName.includes(search)
       );
-      return { ...dept, employees: matchedEmployees };
+      return { ...dept, employees: matchedEmployees || [] };
     })
     .filter(
       (dept) => dept.employees.length > 0 || dept.deptName.includes(search)
     );
+
+  const isSelected = (emp) =>
+    selectedAssignees?.some((a) => a.value === emp.eno);
 
   return (
     <div
@@ -62,7 +76,8 @@ const OrgTree = ({ onSelect, selectedAssignees }) => {
 
       <ul style={{ listStyle: "none", paddingLeft: "0", margin: 0 }}>
         {filteredData.map((dept) => {
-          const isOpen = search !== "" ? true : openDepts[dept.deptName] ?? true;
+          const isOpen =
+            search !== "" ? true : openDepts[dept.deptName] ?? true;
 
           return (
             <li key={dept.deptName} style={{ marginBottom: "14px" }}>
@@ -111,21 +126,27 @@ const OrgTree = ({ onSelect, selectedAssignees }) => {
                         gap: "6px",
                         fontSize: "12px",
                         cursor: "pointer",
-                        fontWeight: selectedAssignees?.some(a => a.value === emp.eno) ? "bold" : "normal",
-                        color: selectedAssignees?.some(a => a.value === emp.eno) ? "#007bff" : "#333",
+                        fontWeight: isSelected(emp) ? "bold" : "normal",
+                        color: isSelected(emp) ? "#007bff" : "#333",
                       }}
                       onClick={() => {
                         if (onSelect) {
-                          onSelect({ value: emp.eno, label: emp.name });
+                          if (isSelected(emp)) {
+                            // ✅ 이미 선택 → 해제
+                            onSelect({ value: emp.eno, label: emp.name, remove: true });
+                          } else {
+                            // ✅ 새로 선택
+                            onSelect({ value: emp.eno, label: emp.name });
+                          }
                         }
                       }}
                     >
-                      <span></span>
                       <span>{emp.name}</span>
-                      <span style={{ color: "#777", fontSize: "10px" }}>{emp.position}</span>
+                      <span style={{ color: "#777", fontSize: "10px" }}>
+                        {emp.position}
+                      </span>
                     </li>
                   ))}
-
                 </ul>
               )}
             </li>
