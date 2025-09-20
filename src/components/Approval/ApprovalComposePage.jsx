@@ -2,8 +2,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styled, { createGlobalStyle } from "styled-components";
 import { useNavigate, useLocation } from "react-router-dom";
-import OrgPickerBottomSheet from "./OrgPickerBottomSheet";
-import { useUserStore } from "../../store/userStore"; // ✅ Zustand 스토어 사용
+import OrgTree from "../common/OrgTree2";                 // ✅ 그대로 사용
+import { useUserStore } from "../../store/userStore";
+import { saveApproval as apiSaveApproval, tempSaveApproval as apiTempSaveApproval } from "../motiveOn/api"; // ✅ axios API 사용
 
 /* ================== compact tokens ================== */
 const H = 30;
@@ -48,86 +49,7 @@ function useTopOffset(selectors = ["#appHeader", "#app-header", ".app-header", "
   return top;
 }
 
-/* ====== CSRF & 네트워크 유틸 ====== */
-function escapeRegex(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
-function getCookie(name) {
-  const m = document.cookie.match(new RegExp("(?:^|; )" + escapeRegex(name) + "=([^;]*)"));
-  return m ? decodeURIComponent(m[1]) : null;
-}
-function getCsrfToken() {
-  return (
-    document.querySelector('meta[name="_csrf"]')?.content ||
-    document.querySelector('meta[name="csrf-token"]')?.content ||
-    getCookie("XSRF-TOKEN") ||
-    null
-  );
-}
-function buildCommonHeaders() {
-  const token = getCsrfToken();
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "X-Requested-With": "XMLHttpRequest",
-    ...(token ? { "X-CSRF-TOKEN": token, "X-XSRF-TOKEN": token } : {}),
-  };
-}
-function looksLikeLoginRedirect(res, bodyText = "") {
-  const url = (res.url || "").toLowerCase();
-  return (
-    res.status === 401 ||
-    res.redirected ||
-    url.includes("/login") ||
-    url.includes("signin") ||
-    /<form[^>]+action=.*login/i.test(bodyText)
-  );
-}
-function tryParseLooseJSON(text = "") {
-  try { return JSON.parse(text); } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
-  return null;
-}
-async function parseResponse(res) {
-  const ct = (res.headers.get("content-type") || "").toLowerCase();
-  let text = "";
-  try { text = await res.text(); } catch {}
-  if (ct.includes("application/json")) {
-    const data = tryParseLooseJSON(text);
-    if (data && typeof data === "object") {
-      const ok = !!(data.ok ?? data.success ?? true);
-      const signNo = data.signNo ?? data.SIGNNO ?? data.signno ?? null;
-      const message = data.message ?? data.msg ?? "";
-      return { ok, signNo, message, _raw: data };
-    }
-    return { ok: false, signNo: null, message: "서버가 JSON을 반환하지 않았습니다.", _raw: null };
-  }
-  if (looksLikeLoginRedirect(res, text) || ct.includes("text/html") || /<html|<body/i.test(text)) {
-    return { ok: false, signNo: null, message: "로그인 세션이 만료되었거나 JSON 응답이 아닙니다.", _raw: null };
-  }
-  if (res.ok && text.trim().length === 0) {
-    return { ok: true, signNo: null, message: "" };
-  }
-  return { ok: res.ok, signNo: null, message: text || `HTTP ${res.status}`, _raw: null };
-}
-async function postJsonWithFallback(urls, payload) {
-  const headers = buildCommonHeaders();
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        credentials: "include",
-        body: JSON.stringify(payload),
-      });
-      const parsed = await parseResponse(res);
-      if (!parsed.ok && (res.status === 404 || /JSON 응답/.test(parsed.message))) continue;
-      return parsed;
-    } catch {}
-  }
-  return { ok: false, signNo: null, message: "서버와 통신하지 못했습니다." };
-}
-
-/* ====== ENO 추출 유틸 ====== */
+/* ====== ENO 유틸 ====== */
 const pickEno = (p) => {
   if (!p) return null;
   const cand =
@@ -139,77 +61,56 @@ const pickEno = (p) => {
   return Number.isFinite(n) ? n : null;
 };
 const toEnoArray = (arr) =>
-  Array.isArray(arr)
-    ? arr.map(pickEno).filter((n) => Number.isFinite(n))
-    : [];
+  Array.isArray(arr) ? arr.map(pickEno).filter((n) => Number.isFinite(n)) : [];
+
+/* ====== userStore → 표시용 정보 ====== */
+function useEffectiveUser() {
+  const { user } = useUserStore();
+  return useMemo(() => {
+    if (!user) return { name: "", eno: null, deptName: null, dno: null };
+    if (typeof user === "number" || typeof user === "string") {
+      const eno = Number(String(user).replace(/[^\d]/g, ""));
+      return { name: "", eno: Number.isFinite(eno) ? eno : null, deptName: null, dno: null };
+    }
+    const eno = user?.eno ?? user?.ENO ?? null;
+    const dno = user?.dno ?? user?.DNO ?? null;
+    return {
+      name: user?.name ?? user?.NAME ?? "",
+      eno: eno != null ? Number(String(eno).replace(/[^\d]/g, "")) : null,
+      deptName: user?.deptName ?? user?.DEPTNAME ?? null,
+      dno: dno != null ? Number(String(dno).replace(/[^\d]/g, "")) : null,
+    };
+  }, [user]);
+}
 
 /* ================= page ================= */
-export default function ApprovalComposePage({
-  currentUserName = "-",
-  currentUserEno = null,   // (옵션) 프롭스로 들어오면 fallback
-  onTempSave,
-  onSubmitDraft,
-}) {
+export default function ApprovalComposePage() {
   const nav = useNavigate();
   const q = useQuery();
   const sformno = q.get("sformno") || "신규양식";
 
-  // ✅ Zustand 유저 스토어 사용
-  const { user, isLoggedIn } = useUserStore();
+  const effUser = useEffectiveUser();
 
-  // user가 숫자(ENO) 또는 객체일 수 있으니 안전 파싱
-  const storeEno = useMemo(() => {
-    if (user == null) return null;
-    const maybe = typeof user === "object"
-      ? (user.eno ?? user.empNo ?? user.EMPNO ?? user.ENO ?? user.id)
-      : user;
-    const n = Number(String(maybe));
-    return Number.isFinite(n) ? n : null;
-  }, [user]);
-
-  const storeName = useMemo(() => {
-    if (typeof user === "object" && user) {
-      return user.name ?? user.empName ?? user.EMP_NAME ?? null;
-    }
-    return null;
-  }, [user]);
-
-  const storeDeptName = useMemo(() => {
-    if (typeof user === "object" && user) {
-      return user.deptName ?? user.DEPTNAME ?? user.dept ?? user.DNAME ?? null;
-    }
-    return null;
-  }, [user]);
-
-  // 화면 바인딩용 상태
-  const [loginEmp, setLoginEmp] = useState({
-    eno: storeEno ?? (Number.isFinite(+currentUserEno) ? +currentUserEno : null),
-    name: storeName ?? currentUserName ?? null,
-    deptName: storeDeptName ?? null,
-  });
-
-  // 스토어/프롭스 변화에 동기화
-  useEffect(() => {
-    setLoginEmp((prev) => ({
-      eno: storeEno ?? (Number.isFinite(+currentUserEno) ? +currentUserEno : prev.eno ?? null),
-      name: storeName ?? currentUserName ?? prev.name ?? null,
-      deptName: storeDeptName ?? prev.deptName ?? null,
-    }));
-  }, [storeEno, storeName, storeDeptName, currentUserEno, currentUserName]);
-
-  // 나머지 UI 상태
   const [title, setTitle] = useState("");
   const [emergency, setEmergency] = useState(false);
-  const [assignee, setAssignee] = useState(null);
-  const [refs, setRefs] = useState([]);
+
+  // 최종 확정 값
+  const [assignee, setAssignee] = useState(null); // 단일
+  const [refs, setRefs] = useState([]);           // 다중
+
+  // 모달 임시선택
+  const [assigneeTemp, setAssigneeTemp] = useState([]); // [{value,label,name,eno}]
+  const [refsTemp, setRefsTemp] = useState([]);
+
   const [dueDate, setDueDate] = useState(todayStr());
   const [content, setContent] = useState("");
   const [files, setFiles] = useState([]);
 
-  const [orgModal, setOrgModal] = useState(null);
+  const [showOrgAssignee, setShowOrgAssignee] = useState(false);
+  const [showOrgRefs, setShowOrgRefs] = useState(false);
+
   const [formName, setFormName] = useState("");
   const [saving, setSaving] = useState(false);
-
   const topOffset = useTopOffset();
 
   const fileInputRef = useRef(null);
@@ -219,115 +120,72 @@ export default function ApprovalComposePage({
     setFiles(list);
   };
 
-  // sformno로 폼 메타 로딩 (formName 표시)
+  // 양식 이름 로딩(간단)
   useEffect(() => {
     let alive = true;
     (async () => {
       if (!sformno || sformno === "신규양식") return;
-      const urls = [
-        `/api/approval/forms.item.json?sformno=${encodeURIComponent(sformno)}`,
-        `/approval/forms.item.json?sformno=${encodeURIComponent(sformno)}`
-      ];
-      for (const u of urls) {
-        try {
-          const res = await fetch(u, { credentials: "include", headers: { Accept: "application/json" } });
-          const parsed = await parseResponse(res);
-          if (parsed?.ok && parsed._raw) {
-            const f = parsed._raw.form || parsed._raw.data || parsed._raw;
-            const name = f?.formName || f?.FORMNAME || f?.name || "";
-            if (alive) setFormName(String(name || "").trim());
-            break;
-          }
-        } catch {}
-      }
+      try {
+        const res = await fetch(`/api/approval/forms.item.json?sformno=${encodeURIComponent(sformno)}`, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!alive) return;
+        const data = await res.json().catch(() => ({}));
+        const f = data.form || data.data || data;
+        const name = f?.formName || f?.FORMNAME || f?.name || "";
+        setFormName(String(name || "").trim());
+      } catch {}
     })();
     return () => { alive = false; };
   }, [sformno]);
 
-  /* ===== payload 구성: approvers/refs + 기안자 정보 포함 ===== */
-  const effUserEno  = loginEmp?.eno ?? null;
-  const effUserName = (loginEmp?.name ?? (effUserEno != null ? `ENO ${effUserEno}` : "")).trim();
+  /* ===== payload 구성 ===== */
+  const buildPayload = (isTemp = false) => {
+  const approverEnos = assignee ? [pickEno(assignee)].filter(Boolean) : [];
+  const refEnos      = toEnoArray(refs);
 
-  const buildPayload = () => {
-    const s = (sformno || "").trim();
-    const approverEnos = assignee ? [pickEno(assignee)].filter(Boolean) : [];
-    const refEnos = toEnoArray(refs);
-
-    // 백엔드 호환: 결재선/참조자 객체 배열
-    const signLines = approverEnos.map((eno, idx) => ({
-      eno, order: idx + 1, type: "APPROVER",
-    }));
-    const viewerList = refEnos.map((eno) => ({ eno }));
-
-    const payload = {
-      title: (title || "").trim(),
-      content: content || "",
-      signcontent: (content || "").trim(),
-      emergency: emergency ? 1 : 0,
-
-      // 결재선/참조자(기존 호환 + 신규 구조)
-      approvers: approverEnos,
-      refs: refEnos,
-      signLines,
-      viewerList,
-
-      // 호환 alias
-      approverEnos: approverEnos,
-      refEnos: refEnos,
-
-      // 기안자 표시(서버는 세션 사용하더라도 함께 전달)
-      drafterEno: Number.isFinite(Number(effUserEno)) ? Number(effUserEno) : null,
-      // drafterName은 선택 (없어도 서버가 세션으로 식별 가능)
-      ...(effUserName ? { drafterName: effUserName } : {}),
-
-      // (선택) 디버그용
-      assignee: assignee ? { eno: pickEno(assignee), name: assignee.name } : null,
-      refNames: refs.map(r => r?.name).filter(Boolean),
-    };
-
-    if (s) {
-      payload.sformno = s;
-      payload.sformNo = s;
-      payload.formNo  = s;
-    }
-    // payload.dueDate = dueDate; // 필요 시 추가
-    return payload;
+    const vo = {
+    eno: effUser,
+    sformno: String(sformno || ""),
+    title: (title || "").trim(),
+    signcontent: (content || "").trim(),
+    emergency: emergency ? 1 : 0,
+    tempsave: isTemp ? 1 : 0,
+    approvers: approverEnos,
+    refs: refEnos,
   };
 
-  const defaultTempSave = async (payload) =>
-    postJsonWithFallback(
-      ["/api/approval/temp-save", "/approval/temp-save"],
-      payload
-    );
 
-  const defaultSubmit = async (payload) =>
-    postJsonWithFallback(
-      ["/api/approval/save", "/approval/save"],
-      payload
-    );
+  return {
+    /* --- SIGNDOC (insertSignDoc/insertTempSave) --- */
+    eno:     effUser.eno,                 // ★ 기안자 ENO
+    dno:     effUser.dno,                 // ★ 기안자 DNO
+    sformno: String(sformno || ""),       // ★ 양식번호 (문자/숫자 모두 문자열로)
+    title:   (title || "").trim(),
+    signcontent: (content || "").trim(),
+    emergency: emergency ? 1 : 0,
+    // 옵션(넣어도 무해): ddate/edate/tempsave/state
+    tempsave: isTemp ? 1 : 0,             // 서버가 무시해도 OK
 
+    /* --- SIGNLINE / SIGNREF (insertSignLines / insertSignRefs) --- */
+    approvers: approverEnos,              // ★ ENO 숫자 배열
+    refs:      refEnos,                   // ★ ENO 숫자 배열
+  };
+};
+
+  /* ===== 저장 호출: axios API 사용 ===== */
   const handleTemp = async () => {
     if (saving) return;
     setSaving(true);
     try {
-      const payload = buildPayload();
-      console.log("[compose] temp payload:", {
-        approver: pickEno(assignee),
-        refs: toEnoArray(refs),
-        drafterEno: payload.drafterEno,
-      });
-
-      let result;
-      try {
-        const doSave = typeof onTempSave === "function" ? onTempSave : defaultTempSave;
-        result = await doSave(payload);
-      } catch (e) {
-        console.error("[compose] custom temp-save failed, fallback:", e);
-        result = await defaultTempSave(payload);
-      }
-
-      alert(result?.ok ? "임시저장 되었습니다." : (result?.message || "임시저장 실패"));
+      const vo = buildPayload();
+      console.log("[compose] TEMP payload →", vo);
+      const { data } = await apiTempSaveApproval(vo); // ✅ axios로 호출
+      const ok = data?.ok ?? true;
+      alert(ok ? "임시저장 되었습니다." : (data?.message || "임시저장 실패"));
     } catch (e) {
+      console.error(e);
       alert(`임시저장 중 오류가 발생했습니다.\n${e?.message || e}`);
     } finally {
       setSaving(false);
@@ -335,65 +193,82 @@ export default function ApprovalComposePage({
   };
 
   const handleSubmit = async () => {
-    if (!isLoggedIn || !effUserEno) {
-      return alert("로그인 정보가 없습니다. 다시 로그인해 주세요.");
+  if (!title.trim()) return alert("제목을 입력해 주세요.");
+  if (!assignee)     return alert("담당자를 선택해 주세요.");
+  if (!pickEno(assignee)) return alert("담당자 ENO를 확인해 주세요.");
+
+  if (saving) return;
+  setSaving(true);
+  try {
+    const vo = buildPayload(false); // ★ 본저장
+    console.log("[SAVE] payload", vo);
+    const { data } = await apiSaveApproval(vo); // axios: /api/approval/save
+    const ok = data?.ok ?? true;
+    const signNo = data?.signNo ?? data?.SIGNNO;
+    if (ok) {
+      alert("결재요청이 등록되었습니다.");
+      if (signNo) nav(`/approval/detail/${encodeURIComponent(signNo)}`, { replace: true });
+      else nav("/approval", { replace: true });
+    } else {
+      alert(data?.message || "결재요청 실패");
     }
-    if (!title.trim()) return alert("제목을 입력해 주세요.");
-    if (!assignee) return alert("담당자를 선택해 주세요.");
-    const eno = pickEno(assignee);
-    if (!eno) return alert("담당자 정보(사번/ENO)를 가져오지 못했습니다. 다시 선택해 주세요.");
+  } catch (e) {
+    console.error(e);
+    alert(`결재요청 오류: ${e?.message || e}`);
+  } finally {
+    setSaving(false);
+  }
+};
 
-    if (files?.length) {
-      console.warn("첨부파일은 현재 JSON 저장에서는 전송되지 않습니다.");
+  /* ===== 모달 오픈 시 현재 값 동기화 ===== */
+  const openAssigneeModal = () => {
+    setAssigneeTemp(assignee ? [assignee] : []);
+    setShowOrgAssignee(true);
+  };
+  const openRefsModal = () => {
+    setRefsTemp(refs);
+    setShowOrgRefs(true);
+  };
+
+  /* ===== OrgTree2를 수정하지 않고 DOM 클릭 가로채기 ===== */
+  const parseNodeFromClick = (evtTarget) => {
+    // 앵커 우선
+    const anchor = evtTarget.closest?.("a.jstree-anchor");
+    if (anchor) {
+      const nodeId = (anchor.id || "").replace(/_anchor$/, ""); // e-xxxx_anchor → e-xxxx
+      const text = anchor.textContent?.trim() || "";
+      const isEmployee = /^e-\d+$/i.test(nodeId);
+      const eno = isEmployee ? Number(nodeId.replace(/\D/g, "")) : null;
+      return { id: nodeId, text, isEmployee, eno };
     }
-
-    if (saving) return;
-    setSaving(true);
-    try {
-      const payload = buildPayload();
-
-      console.log("[compose] submitting:", {
-        approver: eno,
-        refs: toEnoArray(refs),
-        drafterEno: payload.drafterEno,
-        sformno,
-        title,
-      });
-
-      let result;
-      try {
-        if (typeof onSubmitDraft === "function") {
-          result = await onSubmitDraft(payload);
-        } else {
-          result = await defaultSubmit(payload);
-        }
-      } catch (e) {
-        console.error("[compose] custom submit failed, fallback to default:", e);
-        try {
-          result = await defaultSubmit(payload);
-        } catch (e2) {
-          console.error("[compose] default submit failed:", e2);
-          alert(`결재요청 실패(네트워크/예외): ${e2?.message || e2 || "알 수 없는 오류"}`);
-          return;
-        }
-      }
-
-      if (result?.ok) {
-        const id = result?.signNo;
-        if (id) {
-          nav(`/approval/detail/${encodeURIComponent(id)}`, { replace: true });
-        } else {
-          nav("/approval", { replace: true });
-        }
-      } else {
-        alert(result?.message || "결재요청 실패");
-      }
-    } catch (e) {
-      console.error("[compose] submit unexpected error:", e);
-      alert(`결재요청 중 오류가 발생했습니다.\n${e?.message || e}`);
-    } finally {
-      setSaving(false);
+    // li 폴백
+    const li = evtTarget.closest?.("li.jstree-node");
+    if (li) {
+      const nodeId = li.id || "";
+      const text = li.querySelector("a.jstree-anchor")?.textContent?.trim() || "";
+      const isEmployee = /^e-\d+$/i.test(nodeId);
+      const eno = isEmployee ? Number(nodeId.replace(/\D/g, "")) : null;
+      return { id: nodeId, text, isEmployee, eno };
     }
+    return null;
+  };
+
+  const onTreeClickAssignee = (e) => {
+    e.preventDefault?.();
+    e.stopPropagation?.();
+    const info = parseNodeFromClick(e.target);
+    if (!info || !info.isEmployee || !Number.isFinite(info.eno)) return;
+    const obj = { value: info.eno, label: info.text, name: info.text, eno: info.eno };
+    setAssigneeTemp((prev) => (prev.some((p) => p.value === obj.value) ? [] : [obj]));
+  };
+
+  const onTreeClickRefs = (e) => {
+    e.preventDefault?.();
+    e.stopPropagation?.();
+    const info = parseNodeFromClick(e.target);
+    if (!info || !info.isEmployee || !Number.isFinite(info.eno)) return;
+    const obj = { value: info.eno, label: info.text, name: info.text, eno: info.eno };
+    setRefsTemp((prev) => (prev.some((p) => p.value === obj.value) ? prev.filter((p) => p.value !== obj.value) : [...prev, obj]));
   };
 
   return (
@@ -423,14 +298,15 @@ export default function ApprovalComposePage({
               <Inline>
                 <Read
                   value={
-                    (loginEmp?.name
-                      ? loginEmp.name
-                      : (loginEmp?.eno != null ? `ENO ${loginEmp.eno}` : "")
-                    ) + (loginEmp?.deptName ? ` (${loginEmp.deptName})` : "")
+                    (effUser.name
+                      ? effUser.name + (effUser.deptName ? ` (${effUser.deptName})` : "")
+                      : "") || ""
                   }
                   readOnly
                 />
-                <Badge $active={emergency} onClick={() => setEmergency(v => !v)}>긴급</Badge>
+                <Badge $active={emergency} onClick={() => setEmergency((v) => !v)}>
+                  긴급
+                </Badge>
               </Inline>
             </Row>
 
@@ -438,11 +314,9 @@ export default function ApprovalComposePage({
               <Label>
                 담당자 <Req>*</Req>
               </Label>
-              <Picker type="button" onClick={() => setOrgModal("assignee")}>
+              <Picker type="button" onClick={openAssigneeModal}>
                 <span className="text">
-                  {assignee
-                    ? `${assignee.name}${assignee.position ? ` (${assignee.position})` : ""}`
-                    : "담당자를 선택해 주세요."}
+                  {assignee ? `${assignee.name || assignee.label || ""}` : "담당자를 선택해 주세요."}
                 </span>
                 <span className="chev">▾</span>
               </Picker>
@@ -450,9 +324,9 @@ export default function ApprovalComposePage({
 
             <Row>
               <Label>참조자</Label>
-              <Picker type="button" onClick={() => setOrgModal("refs")}>
+              <Picker type="button" onClick={openRefsModal}>
                 <span className="text">
-                  {refs.length ? refs.map((r) => r.name).join(", ") : "참조자를 선택해 주세요."}
+                  {refs.length ? refs.map((r) => r.name || r.label).join(", ") : "참조자를 선택해 주세요."}
                 </span>
                 <span className="chev">▾</span>
               </Picker>
@@ -478,11 +352,7 @@ export default function ApprovalComposePage({
             <Row>
               <Label>첨부파일</Label>
               <FileLine>
-                <Read
-                  readOnly
-                  value={files.length ? `${files.length}개 선택됨` : ""}
-                  placeholder=""
-                />
+                <Read readOnly value={files.length ? `${files.length}개 선택됨` : ""} placeholder="" />
                 <FileBtn type="button" onClick={() => fileInputRef.current?.click()}>
                   파일선택
                 </FileBtn>
@@ -506,22 +376,63 @@ export default function ApprovalComposePage({
         </Card>
       </Viewport>
 
-      <OrgPickerBottomSheet
-        isOpen={orgModal === "assignee"}
-        onClose={() => setOrgModal(null)}
-        multiple={false}
-        initial={assignee ? [assignee] : []}
-        onApply={(list) => setAssignee(list?.[0] || null)}
-        title="조직도 (담당자 선택)"
-      />
-      <OrgPickerBottomSheet
-        isOpen={orgModal === "refs"}
-        onClose={() => setOrgModal(null)}
-        multiple
-        initial={refs}
-        onApply={(list) => setRefs(Array.isArray(list) ? list : [])}
-        title="조직도 (참조자 선택)"
-      />
+      {/* 담당자 선택(단일) */}
+      {showOrgAssignee && (
+        <ModalOverlay onClick={() => setShowOrgAssignee(false)}>
+          <ModalCard onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, textAlign: "center" }}>조직도 (담당자 선택)</h3>
+            <TreeWrap onClick={onTreeClickAssignee}>
+              <OrgTree />
+            </TreeWrap>
+            <SelHint>
+              {assigneeTemp.length
+                ? `선택됨: ${assigneeTemp[0].name || assigneeTemp[0].label}`
+                : "선택된 담당자가 없습니다."}
+            </SelHint>
+            <ModalActions>
+              <BtnGhost onClick={() => setShowOrgAssignee(false)}>취소</BtnGhost>
+              <BtnPrimary
+                onClick={() => {
+                  if (!assigneeTemp.length) { alert("담당자를 선택해 주세요."); return; }
+                  const x = assigneeTemp[assigneeTemp.length - 1];
+                  setAssignee({ ...x, name: x.name || x.label });
+                  setShowOrgAssignee(false);
+                }}
+              >
+                확인
+              </BtnPrimary>
+            </ModalActions>
+          </ModalCard>
+        </ModalOverlay>
+      )}
+
+      {/* 참조자 선택(다중) */}
+      {showOrgRefs && (
+        <ModalOverlay onClick={() => setShowOrgRefs(false)}>
+          <ModalCard onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, textAlign: "center" }}>조직도 (참조자 선택)</h3>
+            <TreeWrap onClick={onTreeClickRefs}>
+              <OrgTree />
+            </TreeWrap>
+            <SelHint>
+              {refsTemp.length
+                ? `선택됨: ${refsTemp.map((x) => x.name || x.label).join(", ")}`
+                : "선택된 참조자가 없습니다."}
+            </SelHint>
+            <ModalActions>
+              <BtnGhost onClick={() => setShowOrgRefs(false)}>취소</BtnGhost>
+              <BtnPrimary
+                onClick={() => {
+                  setRefs(refsTemp.map((x) => ({ ...x, name: x.name || x.label })));
+                  setShowOrgRefs(false);
+                }}
+              >
+                확인
+              </BtnPrimary>
+            </ModalActions>
+          </ModalCard>
+        </ModalOverlay>
+      )}
     </>
   );
 }
@@ -600,3 +511,55 @@ const Footer = styled.div`
 const Actions = styled.div` display: grid; grid-template-columns: 1fr 1fr; gap: 8px; `;
 const Ghost = styled.button` height: ${H}px; border-radius: 8px; border: 1px solid #d9dbe3; background: #fff; font-weight: 800; font-size: ${FONT}px; `;
 const Primary = styled.button` height: ${H}px; border-radius: 8px; border: 0; background: #487FC3; color: #fff; font-weight: 800; font-size: ${FONT}px; `;
+
+/* ====== 모달 & 트리 래퍼 ====== */
+const ModalOverlay = styled.div`
+  position: fixed; inset: 0;
+  background-color: rgba(0,0,0,0.5);
+  display: flex; justify-content: center; align-items: center;
+  z-index: 1000;
+`;
+const ModalCard = styled.div`
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  width: 80%;
+  max-width: 560px;
+`;
+const ModalActions = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 16px;
+`;
+const BtnGhost = styled.button`
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid #d9dbe3;
+  background: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+`;
+const BtnPrimary = styled.button`
+  height: 48px;
+  border-radius: 10px;
+  border: 0;
+  background: #487FC3;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+`;
+const SelHint = styled.div`
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6f7892;
+`;
+const TreeWrap = styled.div`
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  border: 1px solid #eaecef;
+  border-radius: 8px;
+  padding: 8px;
+`;

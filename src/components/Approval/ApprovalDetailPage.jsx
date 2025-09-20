@@ -3,28 +3,23 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import styled, { css } from "styled-components";
 import { getApprovalDetail } from "../motiveOn/api";
+import { useUserStore } from "../../store/userStore";
 
 /* ===== tokens ===== */
-const H = 30;
+const H = 36;
 const FONT = 13;
-const GAP = 10;
-const PADX = 12;
+const GAP = 12;
+const PADX = 14;
 const OUTPAD = 12;
 
-/* ===== CSRF & 네트워크 유틸 (Compose와 동일 컨벤션) ===== */
-function escapeRegex(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function getCookie(name) {
-  const m = document.cookie.match(new RegExp("(?:^|; )" + escapeRegex(name) + "=([^;]*)"));
-  return m ? decodeURIComponent(m[1]) : null;
-}
+/* ===== CSRF & 네트워크 유틸 ===== */
+function escapeRegex(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function getCookie(name) { const m = document.cookie.match(new RegExp("(?:^|; )" + escapeRegex(name) + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : null; }
 function getCsrfToken() {
   return (
     document.querySelector('meta[name="_csrf"]')?.content ||
     document.querySelector('meta[name="csrf-token"]')?.content ||
-    getCookie("XSRF-TOKEN") ||
-    null
+    getCookie("XSRF-TOKEN") || null
   );
 }
 function buildJsonHeaders() {
@@ -105,6 +100,7 @@ function statusTextOf(code){switch(Number(code)){case 0:return"작성/대기";ca
 function statusTypeOf(code){switch(Number(code)){case 1:return"progress";case 2:return"done";case 3:return"reject";case 4:return"hold";case 0:return"draft";default:return"neutral";}}
 function formatDateTime(v){if(!v)return"";const d=new Date(v);if(isNaN(+d))return String(v);const yyyy=d.getFullYear();const mm=String(d.getMonth()+1).padStart(2,"0");const dd=String(d.getDate()).padStart(2,"0");const HH=String(d.getHours()).padStart(2,"0");const MM=String(d.getMinutes()).padStart(2,"0");return`${yyyy}-${mm}-${dd} ${HH}:${MM}`;}
 function safe(v,fallback=""){return(v===null||v===undefined||v==="")?fallback:v;}
+const toNum = (x)=>{ if(x==null) return null; const n = Number(String(x).replace(/[^\d]/g,'')); return Number.isFinite(n)?n:null; };
 
 /* ====== component ====== */
 export default function ApprovalDetailPage({
@@ -118,6 +114,10 @@ export default function ApprovalDetailPage({
 }) {
   const nav = useNavigate();
   const { signNo: routeSignNo } = useParams();
+
+  // 로그인 사용자 (결재 가능 여부 판단)
+  const { user } = useUserStore();
+  const myEno = useMemo(() => toNum(user?.eno ?? user?.ENO ?? user?.id ?? user?.state?.user), [user]);
 
   // 바깥 스크롤 잠금
   useEffect(() => {
@@ -141,7 +141,9 @@ export default function ApprovalDetailPage({
     const d = raw || {};
     const signNoKey  = pick(d, "signNo", "SIGNNO", "signno", "SIGN_NO");
     const titleKey   = pick(d, "title", "TITLE");
-    const drafterKey = pick(d, "drafterName", "DOC_NAME", "DOCNAME", "NAME", "EMP_NAME");
+    // 기안자(이름/사번)
+    const drafterNameKey = pick(d, "drafterName", "DOC_NAME", "DOCNAME", "NAME", "EMP_NAME");
+    const drafterNoKey   = pick(d, "drafterNo", "DOC_ENO", "ENO");
     const emKey      = pick(d, "emergency", "EMERGENCY");
     const statusKey  = pick(d, "docStatus", "DOC_STATUS", "DOCSTATUS", "STATE");
     const contentKey = pick(d, "signcontent", "SIGNCONTENT", "content", "CONTENT", "CONTENTS");
@@ -159,7 +161,8 @@ export default function ApprovalDetailPage({
     return {
       signNo: d[signNoKey],
       title: d[titleKey],
-      drafterName: d[drafterKey],
+      drafterName: d[drafterNameKey],
+      drafterNo: d[drafterNoKey],
       emergency: asInt(d[emKey], 0),
       docStatus: asInt(d[statusKey], 0),
       signcontent: d[contentKey] ?? "",
@@ -175,14 +178,16 @@ export default function ApprovalDetailPage({
     const deptKey   = pick(ln, "approverDept", "APPROVERDEPT", "DEPTNAME", "DEPT_NAME", "DNAME");
     const statusKey = pick(ln, "routeStatus", "ROUTESTATUS", "ROUTE_STATUS", "STATUS");
     const atKey     = pick(ln, "actionAt", "ACTIONAT", "ACTION_AT", "ADATE");
-    const enoKey    = pick(ln, "approverEno", "APPROVERENO", "ENO", "EMP_NO", "EMP_NO");
+    // ✅ 서버가 approverNo 로 내려주는 경우까지 포함
+    const enoKey    = pick(ln, "approverEno", "APPROVERENO", "approverNo", "APPROVERNO", "ENO", "EMP_NO");
     const typeKey   = pick(ln, "type", "TYPE", "ROUTE_TYPE");
 
     return {
       orderSeq: ln[orderKey],
       approverName: ln[nameKey],
       approverDept: ln[deptKey],
-      routeStatus: asInt(ln[statusKey], 0), // 0 대기, 1 진행, 2 승인, 3 반려 등 사내 규칙
+      // ✅ 서버 규칙: 0=대기, 1=승인, 2=반려, (4=보류)
+      routeStatus: asInt(ln[statusKey], 0),
       actionAt: ln[atKey],
       approverEno: ln[enoKey],
       type: ln[typeKey] || "APPROVER",
@@ -220,9 +225,7 @@ export default function ApprovalDetailPage({
         console.error("[detail] load fail:", e);
         if (!alive) return;
         setErrMsg("상세를 불러오지 못했습니다.");
-        if (!initialDoc) {
-          setDoc(null); setLines([]); setRefs([]);
-        }
+        setDoc(null); setLines([]); setRefs([]);
       } finally {
         if (alive) setLoading(false);
       }
@@ -235,13 +238,27 @@ export default function ApprovalDetailPage({
   const stateText = useMemo(() => statusTextOf(doc?.docStatus), [doc?.docStatus]);
   const stateType = useMemo(() => statusTypeOf(doc?.docStatus), [doc?.docStatus]);
 
-  // ✅ 담당자: '대기(0)' 상태 결재자 → 없으면 1차 결재자
+  // ✅ 담당자: '대기(0)'인 첫 결재자
   const assignee = useMemo(() => {
     if (!Array.isArray(lines) || lines.length === 0) return null;
     const pending = lines.find((l) => Number(l.routeStatus) === 0);
     const target = pending || lines[0];
     return target ? { name: target.approverName, dept: target.approverDept } : null;
   }, [lines]);
+
+  // ✅ 결재 가능 여부 (결재선 포함 + 내 차례=대기 0)
+  const iAmApprover = useMemo(
+    () => !!(myEno && lines.some((l) => toNum(l.approverEno) === toNum(myEno))),
+    [lines, myEno]
+  );
+  const firstActionable = useMemo(
+    () => lines.find((l) => Number(l.routeStatus) === 0),
+    [lines]
+  );
+  const isMyTurn = useMemo(
+    () => iAmApprover && firstActionable && toNum(firstActionable.approverEno) === toNum(myEno),
+    [iAmApprover, firstActionable, myEno]
+  );
 
   // 목록
   const handleList = () => {
@@ -263,55 +280,43 @@ export default function ApprovalDetailPage({
 
   const submitApprove = async () => {
     if (!doc) return;
+    if (!isMyTurn) return alert(!iAmApprover ? "결재선에 포함되지 않았습니다." : "아직 내 결재 순서가 아닙니다.");
     if (!window.confirm("승인하시겠습니까?")) return;
     try {
       const doApprove = onApprove || defaultAct;
       const r = await doApprove({ signNo: doc?.signNo, comment, action: "approve" });
-      if (r?.ok) {
-        alert("승인되었습니다.");
-        handleList();
-      } else {
-        alert(r?.message || "승인 실패");
-      }
-    } catch {
-      alert("승인 중 오류가 발생했습니다.");
-    }
+      if (r?.ok) { alert("승인되었습니다."); handleList(); }
+      else { alert(r?.message || "승인 실패"); }
+    } catch { alert("승인 중 오류가 발생했습니다."); }
   };
   const submitReject = async () => {
     if (!doc) return;
+    if (!isMyTurn) return alert(!iAmApprover ? "결재선에 포함되지 않았습니다." : "아직 내 결재 순서가 아닙니다.");
     if (!window.confirm("반려하시겠습니까?")) return;
     try {
       const doReject = onReject || defaultAct;
       const r = await doReject({ signNo: doc?.signNo, comment, action: "reject" });
-      if (r?.ok) {
-        alert("반려되었습니다.");
-        handleList();
-      } else {
-        alert(r?.message || "반려 실패");
-      }
-    } catch {
-      alert("반려 중 오류가 발생했습니다.");
-    }
+      if (r?.ok) { alert("반려되었습니다."); handleList(); }
+      else { alert(r?.message || "반려 실패"); }
+    } catch { alert("반려 중 오류가 발생했습니다."); }
   };
 
-  // 결재선 뱃지/상태 텍스트
+  // 결재선 뱃지/상태 텍스트 (서버 규칙: 0=대기, 1=승인, 2=반려, 4=보류)
   const routeStatusText = (s) => {
     switch (Number(s)) {
       case 0: return "대기";
-      case 1: return "진행";
-      case 2: return "승인";
-      case 3: return "반려";
+      case 1: return "승인";
+      case 2: return "반려";
       case 4: return "보류";
       default: return "-";
     }
   };
   const routeChipType = (s) => {
     switch (Number(s)) {
-      case 2: return "done";
-      case 3: return "reject";
+      case 1: return "done";    // 승인
+      case 2: return "reject";  // 반려
       case 4: return "hold";
-      case 1: return "progress";
-      case 0: default: return "draft";
+      case 0: default: return "draft"; // 대기/기본
     }
   };
 
@@ -352,11 +357,17 @@ export default function ApprovalDetailPage({
                 <FieldValue>{safe(doc?.signNo, "-")}</FieldValue>
               </Row>
               <Row>
-                <FieldLabel>요청자</FieldLabel>
-                <FieldValue>{safe(doc?.currentUserName, "-")}</FieldValue>
+                <FieldLabel>기안자</FieldLabel>
+                <FieldValue>
+                  {doc?.drafterName
+                    ? doc.drafterName
+                    : doc?.drafterNo
+                      ? `사번 ${doc.drafterNo}`
+                      : "-"}
+                </FieldValue>
               </Row>
 
-              {/* ✅ 담당자 */}
+              {/* 담당자(현재 차례) */}
               <Row>
                 <FieldLabel>담당자</FieldLabel>
                 {assignee ? (
@@ -380,7 +391,7 @@ export default function ApprovalDetailPage({
                 </div>
               </MetaGrid>
 
-              {/* ✅ 결재선 */}
+              {/* 결재선 */}
               <Row>
                 <FieldLabel>결재선</FieldLabel>
                 {!lines?.length ? (
@@ -395,6 +406,9 @@ export default function ApprovalDetailPage({
                           {ln.approverDept && <span className="meta"> · {ln.approverDept}</span>}
                           {ln.type && ln.type !== "APPROVER" && (
                             <span className="type">({ln.type})</span>
+                          )}
+                          {toNum(ln.approverEno) === toNum(myEno) && (
+                            <span className="me">내 결재</span>
                           )}
                         </div>
                         <div className="right">
@@ -423,7 +437,7 @@ export default function ApprovalDetailPage({
                 />
               </Row>
 
-              {/* ✅ 첨부 */}
+              {/* 첨부 */}
               <Row>
                 <FieldLabel>첨부파일</FieldLabel>
                 {!doc?.attachments || doc.attachments.length === 0 ? (
@@ -446,7 +460,7 @@ export default function ApprovalDetailPage({
                 )}
               </Row>
 
-              {/* ✅ 참조자 */}
+              {/* 참조자 */}
               <Row>
                 <FieldLabel>참조자</FieldLabel>
                 {!refs?.length ? (
@@ -477,10 +491,32 @@ export default function ApprovalDetailPage({
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitApprove();
               }}
+              disabled={!isMyTurn}
+              title={!isMyTurn ? (!iAmApprover ? "결재선에 포함되지 않음" : "아직 내 결재 순서가 아님") : ""}
             />
-            <Btn $variant="ok" onClick={submitApprove} disabled={!doc}>승인</Btn>
-            <Btn $variant="danger" onClick={submitReject} disabled={!doc}>반려</Btn>
+            <Btn
+              $variant="ok"
+              onClick={submitApprove}
+              disabled={!doc || !isMyTurn}
+              title={!isMyTurn ? (!iAmApprover ? "결재선에 포함되지 않음" : "아직 내 결재 순서가 아님") : ""}
+            >
+              승인
+            </Btn>
+            <Btn
+              $variant="danger"
+              onClick={submitReject}
+              disabled={!doc || !isMyTurn}
+              title={!isMyTurn ? (!iAmApprover ? "결재선에 포함되지 않음" : "아직 내 결재 순서가 아님") : ""}
+            >
+              반려
+            </Btn>
           </FooterGrid>
+
+          {!iAmApprover ? (
+            <GuardText>🔒 결재선에 포함되지 않아 처리할 수 없습니다.</GuardText>
+          ) : !isMyTurn ? (
+            <GuardText>⌛ 아직 <b>내 결재 순서</b>가 아닙니다.</GuardText>
+          ) : null}
         </Footer>
       </Shell>
     </Wrapper>
@@ -498,7 +534,7 @@ const Wrapper = styled.div`
 `;
 
 const Shell = styled.div`
-  width: 100%; max-width: 680px; height: 100%;
+  width: 100%; max-width: 720px; height: 100%;
   background: #fff;
   border: 1px solid #eef1f6; border-radius: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04);
   display: grid; grid-template-rows: auto 1fr auto; overflow: hidden;
@@ -513,16 +549,17 @@ const TitleBar = styled.h3`
   font-size: 16px; font-weight: 800; color: #2b2f3a; margin: 0;
 `;
 const Btn = styled.button`
-  height: ${H}px; padding: 0 12px; border-radius: 8px; font-weight: 800;
+  height: ${H}px; padding: 0 14px; border-radius: 8px; font-weight: 800;
   border: 1px solid transparent; cursor: pointer; font-size: ${FONT}px;
   ${({ $variant }) => $variant === "ghost" && `background:#fff;color:#3b4052;border-color:#DDE2EE;`}
   ${({ $variant }) => $variant === "ok" && `background:#2F9E63;color:#fff;`}
   ${({ $variant }) => $variant === "danger" && `background:#D75340;color:#fff;`}
+  &:disabled { opacity:.55; cursor: not-allowed; }
 `;
 
 const ScrollArea = styled.div`
   min-height: 0; overflow: auto;
-  padding: 4px ${PADX + 2}px ${PADX + 2}px;
+  padding: 6px ${PADX + 2}px ${PADX + 2}px;
   overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: rgba(0,0,0,.25) transparent;
   &::-webkit-scrollbar { width: 8px; }
@@ -530,7 +567,7 @@ const ScrollArea = styled.div`
 `;
 
 const PageTitle = styled.h1`
-  font-size: 18px; font-weight: 800; line-height: 1.35; margin: 6px 0 12px;
+  font-size: 19px; font-weight: 800; line-height: 1.35; margin: 6px 0 12px;
   color: #111827; word-break: keep-all; display: flex; align-items: center; gap: 8px;
 `;
 const EmBadge = styled.span`
@@ -594,12 +631,13 @@ const RouteList = styled.ul`
     .right { display: flex; align-items: center; gap: 8px; }
     .idx {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 22px; height: 22px; border-radius: 999px;
+      width: 22px; height: 20px; border-radius: 999px;
       background: #f3f5fa; color: #556070; font-size: 11px; font-weight: 800; margin-right: 8px;
       flex: 0 0 auto;
     }
-    .name { font-weight: 800; color: #1f2937; }
+    .name { font-weight: 700; color: #1f2937; font-size: 13px;}
     .type { margin-left: 6px; font-size: 12px; color: #6f7892; }
+    .me { margin-left: 8px; font-size: 11px; font-weight: 800; color: #0b5ed7; background:#e7f1ff; border:1px solid #cfe2ff; padding:2px 6px; border-radius:999px; }
     .meta { color: #6f7892; font-size: 12px; }
     .dt { white-space: nowrap; }
   }
@@ -612,7 +650,6 @@ const Chip = styled.span`
       case "done":     return css`background:#E6F7EE; color:#18794E; border-color:#C6F0DA;`;
       case "reject":   return css`background:#FDE8E8; color:#B01818; border-color:#F5C2C2;`;
       case "hold":     return css`background:#FFF4E5; color:#AD5A00; border-color:#FFE1BF;`;
-      case "progress": return css`background:#E7F1FF; color:#0B5ED7; border-color:#CFE2FF;`;
       case "draft":
       default:         return css`background:#EEF1F6; color:#445069; border-color:#E3E7EF;`;
     }
@@ -630,4 +667,8 @@ const FooterGrid = styled.div`
 const CommentInput = styled.input`
   height: ${H}px; padding: 0 10px; border: 1px solid #E1E5EF;
   border-radius: 8px; font-size: ${FONT}px; min-width: 120px;
+  &:disabled { background:#f6f7fb; color:#98a0b3; }
+`;
+const GuardText = styled.div`
+  margin-top: 8px; color: #6f7892; font-size: 12px;
 `;

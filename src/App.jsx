@@ -102,7 +102,7 @@ function App() {
           <Route path="/approval/viewerList" element={<ReferenceApprovalPage />} />
           <Route path="/approval/draftList" element={<DraftApprovalPage />} />
           <Route path="/approval/tempList" element={<TempApprovalPage />} />
-          <Route path="/approval/completeList" element={<CompleteApprovalPage />} />
+          <Route path="/approval/approvalList" element={<CompleteApprovalPage />} />
           <Route path="/approval/detail/:signNo" element={<ApprovalDetailPage headerOffset={56} />} />
           <Route path="/approval/form-picker" element={<FormPickerPage />} />
           <Route path="/approval/compose" element={<ApprovalComposePage />} />

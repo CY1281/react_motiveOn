@@ -324,19 +324,19 @@ function ApprovalHomeMobile({ counts, recentDrafts, toApprove, loading, errMsg }
             <CardHeader>결재 현황</CardHeader>
             <CardBody>
               <StatusGrid>
-                <Stat className="agree" onClick={() => navigate("/approval?tab=mine&urgent=1")} aria-label="긴급 결재">
+                <Stat className="agree" onClick={() => navigate("/approval/approvalList")} aria-label="긴급 결재">
                   <div className="cap">긴급 결재</div>
                   <div className="num">{counts.urgentCount}<span className="u">건</span></div>
                 </Stat>
-                <Stat className="prog" onClick={() => navigate("/approval?tab=rejected")} aria-label="반려 문서">
+                <Stat className="prog" onClick={() => navigate("/approval/approvalList")} aria-label="반려 문서">
                   <div className="cap">반려 문서</div>
                   <div className="num">{counts.returnedCount}<span className="u">건</span></div>
                 </Stat>
-                <Stat className="done" onClick={() => navigate("/approval?tab=hold")} aria-label="보류 문서">
+                <Stat className="done" onClick={() => navigate("/approval/approvalList")} aria-label="보류 문서">
                   <div className="cap">보류 문서</div>
                   <div className="num">{counts.holdCount}<span className="u">건</span></div>
                 </Stat>
-                <Stat className="wait" onClick={() => navigate("/approval?tab=mine")} aria-label="대기 문서">
+                <Stat className="wait" onClick={() => navigate("/approval/approvalList")} aria-label="대기 문서">
                   <div className="cap">대기 문서</div>
                   <div className="num">{counts.waitingCount}<span className="u">건</span></div>
                 </Stat>

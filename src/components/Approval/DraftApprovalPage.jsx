@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import FormPickerPage from "./FormPickerPage";
-import BottomSheetModal from "../common/BottomSheetModal"; // ← 경로/대소문자 확인
+import BottomSheetModal from "../Common/BottomSheetModal"; // ← 경로/대소문자 확인
 import { getApprovalDraftList } from "../motiveOn/api";
 
 export default function DraftApprovalPage({ headerOffset = 56, onNewDraft }) {
